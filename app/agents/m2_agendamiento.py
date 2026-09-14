@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -170,6 +171,46 @@ def _build_system(canal: str) -> str:
     )
 
 
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_CONFIRM_RE = re.compile(
+    r"tu cita (qued[oó]|est[aá] (agendada|confirmada|lista))|qued[oó] (agendada|confirmada)"
+    r"|cita (agendada|confirmada) (para|el)|listo,? tu cita",
+    re.IGNORECASE,
+)
+_CORRECCION = (
+    "CORRECCIÓN DEL SISTEMA: en este turno NO se agendó ninguna cita (book_appointment no "
+    "se ejecutó con éxito). No digas que la cita quedó agendada ni confirmada. Pide al "
+    "paciente el siguiente dato que falte para poder agendar, una sola pregunta."
+)
+
+
+def missing_booking_data(
+    args: dict, *, user_texts: list[str], canal: str, user_phone: str
+) -> list[str]:
+    """Datos que el paciente todavía NO escribió y el modelo quiere usar para agendar.
+
+    Evita que el modelo invente nombre, correo o teléfono: cada dato debe
+    aparecer en lo que el paciente escribió en la conversación.
+    """
+    corpus = "\n".join(user_texts).lower()
+    digits = re.sub(r"\D", "", corpus)
+    missing: list[str] = []
+
+    tokens = [w for w in re.findall(r"\w+", (args.get("userName") or "").lower()) if len(w) >= 3]
+    if not tokens or not any(w in corpus for w in tokens):
+        missing.append("nombre completo del paciente")
+
+    email = (args.get("userEmail") or "").strip().lower()
+    if not _EMAIL_RE.fullmatch(email) or email not in corpus:
+        missing.append("correo electrónico")
+
+    if not (canal == "whatsapp" and user_phone):
+        phone = re.sub(r"\D", "", args.get("userPhone") or "")
+        if len(phone) < 10 or phone[-10:] not in digits:
+            missing.append("número de celular a 10 dígitos")
+    return missing
+
+
 async def respond(
     user_text: str,
     history: list[dict[str, str]],
@@ -183,6 +224,11 @@ async def respond(
     msgs: list[dict] = [{"role": "system", "content": system}]
     msgs.extend(history[-15:])
     msgs.append({"role": "user", "content": user_text})
+
+    user_texts = [m.get("content") or "" for m in msgs if m.get("role") == "user"]
+    booked: dict | None = None      # cita creada en este turno (evita duplicados)
+    changed = False                 # reagendó o canceló con éxito en este turno
+    corrected = False
 
     for _ in range(6):
         def _call() -> dict:
@@ -200,7 +246,13 @@ async def respond(
         msgs.append(choice)
         tool_calls = choice.get("tool_calls") or []
         if not tool_calls:
-            return choice.get("content") or ""
+            content = choice.get("content") or ""
+            if not booked and not changed and not corrected and _CONFIRM_RE.search(content):
+                # El modelo dice que agendó sin haberlo hecho: se le corrige una vez.
+                corrected = True
+                msgs.append({"role": "system", "content": _CORRECCION})
+                continue
+            return content
 
         for tc in tool_calls:
             name = tc["function"]["name"]
@@ -208,6 +260,21 @@ async def respond(
             try:
                 if name == "consultar_disponibilidad":
                     result = await agenda.get_slots(args["startTime"], args["endTime"])
+                elif name == "book_appointment" and booked:
+                    result = {"status": "already_booked", **booked}
+                elif name == "book_appointment" and (
+                    faltan := missing_booking_data(
+                        args, user_texts=user_texts, canal=canal, user_phone=user_phone
+                    )
+                ):
+                    result = {
+                        "error": "faltan_datos",
+                        "faltan": faltan,
+                        "instruccion": (
+                            "No se agendó. El paciente aún no ha escrito estos datos. "
+                            "Pídele el primero que falte (una sola pregunta). Nunca inventes datos."
+                        ),
+                    }
                 elif name == "book_appointment":
                     # Telefono efectivo: el del canal (WA) > el que pidio el LLM (TG/IG/MSG).
                     effective_phone = user_phone or (
@@ -249,9 +316,11 @@ async def respond(
                         )
                     except Exception as e:  # noqa: BLE001
                         booking["contactos_error"] = str(e)
+                    booked = booking
                     result = booking
                 elif name == "cambioCita":
                     result = await _cambio_cita(args, user_phone)
+                    changed = result.get("status") in ("rescheduled", "cancelled")
                 else:
                     result = {"error": f"unknown tool {name}"}
             except Exception as e:  # noqa: BLE001
