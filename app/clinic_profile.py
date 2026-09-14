@@ -6,163 +6,108 @@ reciben estos datos via placeholders `{{CLINIC_*}}` (ver
 `app/security/system_prompt.py`) y los textos visibles fijos (bloqueo,
 fallbacks, handoff) se derivan de aqui.
 
+Datos actuales: Swiss Dental (Dr. Arturo Ramirez), tomados de la landing
+https://landingdrarturo.vercel.app. Lo marcado "POR CONFIRMAR" aun no lo ha
+confirmado el consultorio; el bot no inventa esos datos.
+
 Modulo de datos puro: sin imports de la app para evitar ciclos.
 """
 
 from __future__ import annotations
 
 CLINIC: dict = {
-    "nombre": "Clínica Dental Aurea",
-    "eslogan": "Odontología integral y estética dental",
-    "direccion": "Av. Reforma Norte 1204, Col. Centro, Puebla, Pue.",
-    "referencia": "A una cuadra del Paseo Bravo, con estacionamiento propio",
-    "telefono": "222 123 4567",
-    "whatsapp": "222 123 4567",
+    "nombre": "Swiss Dental",
+    "eslogan": "Consultorio dental del Dr. Arturo Ramirez. Atención dental para niños y adultos",
+    "direccion": "Carretera #31, La Loma Xicohtencatl, 90110 San Diego Metepec, Tlax.",
+    "referencia": "",
+    "telefono": "246 144 1431",
+    "whatsapp": "246 144 1431",
     "horarios": [
-        "Lunes a viernes: 9:00 a 19:00",
-        "Sábado: 9:00 a 14:00",
+        "Lunes a viernes: 10:00 a 14:00 y 16:00 a 19:45",
+        "Sábado: 10:00 a 13:45",
         "Domingo: cerrado",
+        "En días festivos el horario puede variar",
     ],
-    "urgencias": "Línea de urgencias 222 123 4567, disponible hasta las 22:00 entre semana",
-    "equipo": [
-        {
-            "nombre": "Dra. Mariana Estrada",
-            "rol": "Directora, odontología general y estética",
-            "cedula": "1234567",
-        },
-        {"nombre": "Dr. Ricardo Peña", "rol": "Ortodoncia y ortopedia maxilar", "cedula": ""},
-        {"nombre": "Dra. Sofía Lira", "rol": "Endodoncia", "cedula": ""},
-        {"nombre": "Dr. Andrés Cuevas", "rol": "Implantología y cirugía oral", "cedula": ""},
-    ],
-    "formas_pago": [
-        "Efectivo",
-        "Tarjeta de crédito o débito",
-        "Transferencia",
-        "Meses sin intereses en compras desde $3,000",
-        "Plan de pagos interno para ortodoncia e implantes (enganche + mensualidades)",
-    ],
-    "aseguradoras": (
-        "No se factura directo a la aseguradora, pero se entrega factura y "
-        "expediente para que el paciente solicite su reembolso."
+    "urgencias": (
+        "No hay línea de urgencias aparte. Ante dolor o urgencia, escribir por WhatsApp o "
+        "llamar al 246 144 1431 lo antes posible en horario de atención para recibir el "
+        "horario disponible más próximo"
     ),
+    "equipo": [
+        {"nombre": "Dr. Arturo Ramirez", "rol": "Cirujano dentista", "cedula": ""},
+    ],
+    # POR CONFIRMAR: el consultorio no ha confirmado precios ni formas de pago.
+    "precio_consulta": "",
+    "formas_pago": [],
+    "nota_pagos": (
+        "Las formas de pago aún no están confirmadas por chat. El consultorio ofrece "
+        "flexibilidad en los tratamientos y explica el costo antes de iniciar; los detalles "
+        "de pago se confirman directamente con el consultorio."
+    ),
+    "aseguradoras": "Por confirmar con el consultorio.",
     "politicas": [
-        "Las citas se agendan con al menos 24 horas de anticipación",
-        "Las cancelaciones se avisan con al menos 4 horas de anticipación",
-        "Tolerancia de 15 minutos",
-        "La primera cita dura aproximadamente 40 minutos",
+        "Antes de iniciar cualquier tratamiento, el doctor revisa el caso, explica el procedimiento y el costo",
+        "Se respeta el horario de la cita (citas a tiempo)",
+        "Se atiende a niños y adultos; los menores vienen acompañados de su madre, padre o tutor",
     ],
 }
 
-# Catalogo de servicios. `precio` es el precio de referencia "desde" (None =
-# solo cotizacion tras valoracion). `alias` alimenta la busqueda de M3.
+# Catalogo de servicios. `precio` = precio de referencia "desde" (None = el
+# costo se informa en la valoracion). `alias` alimenta la busqueda de M3.
 SERVICES: list[dict] = [
     {
-        "id": "valoracion",
-        "nombre": "Consulta y valoración",
+        "id": "consulta",
+        "nombre": "Consulta y revisión general",
         "categoria": "limpieza_revision",
-        "precio": 300,
-        "texto_precio": "$300",
-        "incluye": "Revisión completa y plan de tratamiento. Se bonifica si el tratamiento se realiza el mismo día.",
-        "alias": ["consulta", "valoracion", "revision", "chequeo", "primera cita", "diagnostico"],
+        "precio": None,
+        "texto_precio": "costo según valoración",
+        "incluye": "Revisión completa de dientes y encías para detectar a tiempo caries u otros problemas, con un plan de tratamiento explicado paso a paso.",
+        "alias": ["consulta", "valoracion", "revision", "chequeo", "primera cita", "revisión general"],
     },
     {
         "id": "limpieza",
-        "nombre": "Limpieza dental (profilaxis)",
+        "nombre": "Limpieza dental",
         "categoria": "limpieza_revision",
-        "precio": 800,
-        "texto_precio": "desde $800",
-        "incluye": "Retiro de sarro y placa, pulido dental.",
+        "precio": None,
+        "texto_precio": "costo según valoración",
+        "incluye": "Eliminación de sarro y placa bacteriana para mantener encías sanas, prevenir caries y lucir una sonrisa más limpia.",
         "alias": ["limpieza", "profilaxis", "sarro", "placa"],
     },
     {
-        "id": "resina",
-        "nombre": "Resina / empaste",
+        "id": "resinas",
+        "nombre": "Resinas y restauraciones",
         "categoria": "limpieza_revision",
-        "precio": 900,
-        "texto_precio": "desde $900",
-        "incluye": "Restauración de una pieza con resina del color del diente.",
-        "alias": ["resina", "empaste", "caries", "calza", "tapadura", "obturacion"],
+        "precio": None,
+        "texto_precio": "costo según valoración",
+        "incluye": "Tratamiento de caries y reparación de dientes fracturados con resinas del color natural del diente.",
+        "alias": ["resina", "resinas", "empaste", "caries", "calza", "tapadura", "restauracion", "diente roto", "fracturado"],
     },
     {
-        "id": "extraccion",
-        "nombre": "Extracción simple",
+        "id": "infantil",
+        "nombre": "Odontología infantil",
+        "categoria": "odontopediatria",
+        "precio": None,
+        "texto_precio": "costo según valoración",
+        "incluye": "Atención paciente y amable para los más pequeños, para que su visita al dentista sea tranquila desde la primera cita.",
+        "alias": ["niño", "nino", "niña", "nina", "hijo", "hija", "infantil", "odontopediatria", "bebe", "pequeño"],
+    },
+    {
+        "id": "extracciones",
+        "nombre": "Extracciones",
         "categoria": "dolor_urgencia",
-        "precio": 1200,
-        "texto_precio": "desde $1,200",
-        "incluye": "Extracción de una pieza sin complicaciones quirúrgicas.",
-        "alias": ["extraccion", "sacar muela", "sacar diente", "quitar muela"],
+        "precio": None,
+        "texto_precio": "costo según valoración",
+        "incluye": "Extracción de piezas dentales con anestesia local, indicaciones claras de cuidado y seguimiento de tu recuperación.",
+        "alias": ["extraccion", "extracciones", "sacar muela", "sacar diente", "quitar muela", "muela del juicio"],
     },
     {
-        "id": "muela_juicio",
-        "nombre": "Extracción de muela del juicio",
-        "categoria": "dolor_urgencia",
-        "precio": 3500,
-        "texto_precio": "desde $3,500",
-        "incluye": "Procedimiento con el especialista en cirugía oral.",
-        "alias": ["muela del juicio", "cordal", "tercer molar", "juicio"],
-    },
-    {
-        "id": "endodoncia",
-        "nombre": "Endodoncia",
-        "categoria": "dolor_urgencia",
-        "precio": 3800,
-        "texto_precio": "desde $3,800",
-        "incluye": "Tratamiento de conductos realizado por la especialista en endodoncia.",
-        "alias": ["endodoncia", "conductos", "matar nervio", "nervio"],
-    },
-    {
-        "id": "corona",
-        "nombre": "Corona de zirconia",
-        "categoria": "implantes_protesis",
-        "precio": 7500,
-        "texto_precio": "desde $7,500",
-        "incluye": "Corona estética de zirconia por pieza.",
-        "alias": ["corona", "zirconia", "funda", "protesis"],
-    },
-    {
-        "id": "blanqueamiento",
-        "nombre": "Blanqueamiento en consultorio",
-        "categoria": "estetica_blanqueamiento",
-        "precio": 4500,
-        "texto_precio": "desde $4,500",
-        "incluye": "Sesión de blanqueamiento profesional en consultorio.",
-        "alias": ["blanqueamiento", "blanquear", "dientes blancos", "aclarar"],
-    },
-    {
-        "id": "brackets",
-        "nombre": "Ortodoncia con brackets metálicos",
-        "categoria": "ortodoncia",
-        "precio": 12000,
-        "texto_precio": "$12,000",
-        "incluye": "Colocación de brackets y 12 meses de citas de control.",
-        "alias": ["ortodoncia", "brackets", "frenos", "fierros", "enderezar dientes"],
-    },
-    {
-        "id": "alineadores",
-        "nombre": "Alineadores transparentes",
-        "categoria": "ortodoncia",
-        "precio": 35000,
-        "texto_precio": "desde $35,000",
-        "incluye": "Ortodoncia invisible con alineadores removibles.",
-        "alias": ["alineadores", "invisalign", "ortodoncia invisible", "transparentes"],
-    },
-    {
-        "id": "implante",
-        "nombre": "Implante dental unitario",
-        "categoria": "implantes_protesis",
-        "precio": 18000,
-        "texto_precio": "desde $18,000",
-        "incluye": "Implante de una pieza con el especialista en implantología.",
-        "alias": ["implante", "implantes", "diente perdido", "tornillo"],
-    },
-    {
-        "id": "diseno_sonrisa",
-        "nombre": "Diseño de sonrisa",
+        "id": "estetica",
+        "nombre": "Estética dental",
         "categoria": "estetica_blanqueamiento",
         "precio": None,
-        "texto_precio": "cotización tras valoración",
-        "incluye": "Plan estético personalizado (carillas, resinas, blanqueamiento según el caso).",
-        "alias": ["diseño de sonrisa", "diseno de sonrisa", "carillas", "sonrisa", "estetica"],
+        "texto_precio": "costo según valoración",
+        "incluye": "Tratamientos para mejorar el color y la forma de tus dientes, como blanqueamiento dental, siempre con una valoración previa.",
+        "alias": ["estetica", "blanqueamiento", "blanquear", "dientes blancos", "sonrisa", "carillas"],
     },
 ]
 
@@ -184,18 +129,25 @@ MOTIVOS: dict[str, str] = {
 NAME: str = CLINIC["nombre"]
 
 URGENCY_LINE_TEXT: str = (
-    f"Si el dolor es muy fuerte o empeora, puedes llamar a nuestra línea de "
-    f"urgencias al {CLINIC['telefono']} (entre semana hasta las 22:00)."
+    f"Si el dolor es muy fuerte o empeora, llámanos o escríbenos por WhatsApp al "
+    f"{CLINIC['telefono']} lo antes posible para darte el horario más próximo."
 )
 
 HANDOFF_MESSAGE: str = (
-    "Esa pregunta la debe responder uno de nuestros especialistas. "
+    "Esa pregunta la debe responder el doctor. "
     "Ya le avisé al equipo y en breve te atienden por este mismo chat."
 )
 
+# Cómo hablar de precios cuando no hay cifra confirmada.
+PRICE_NOTE: str = (
+    f"El costo exacto se define en la valoración: el doctor revisa tu caso y te informa "
+    f"el costo antes de iniciar cualquier tratamiento."
+    + (f" La consulta cuesta {CLINIC['precio_consulta']}." if CLINIC["precio_consulta"] else "")
+)
+
 OUT_OF_SCOPE_TEXT: str = (
-    f"Solo puedo ayudarte con temas de {NAME}: servicios, precios de "
-    f"referencia, horarios y citas. ¿En qué de eso te puedo ayudar?"
+    f"Solo puedo ayudarte con temas de {NAME}: servicios, horarios, ubicación y citas. "
+    f"¿En qué de eso te puedo ayudar?"
 )
 
 TECH_FALLBACK_TEXT: str = (
@@ -224,27 +176,33 @@ def render_team() -> str:
 def render_services() -> str:
     lines = []
     for s in SERVICES:
-        lines.append(f"- {s['nombre']}: {s['texto_precio']}. {s['incluye']}")
+        lines.append(f"- {s['nombre']} ({s['texto_precio']}): {s['incluye']}")
     return "\n".join(lines)
+
+
+def render_payments() -> str:
+    if CLINIC["formas_pago"]:
+        return "\n".join(f"- {p}" for p in CLINIC["formas_pago"])
+    return CLINIC["nota_pagos"]
 
 
 def render_profile() -> str:
     c = CLINIC
     horarios = "\n".join(f"- {h}" for h in c["horarios"])
-    pagos = "\n".join(f"- {p}" for p in c["formas_pago"])
     politicas = "\n".join(f"- {p}" for p in c["politicas"])
+    referencia = f"Referencia: {c['referencia']}\n" if c.get("referencia") else ""
     return (
         f"Nombre: {c['nombre']}\n"
-        f"Eslogan: {c['eslogan']}\n"
+        f"Descripción: {c['eslogan']}\n"
         f"Dirección: {c['direccion']}\n"
-        f"Referencia: {c['referencia']}\n"
+        f"{referencia}"
         f"Teléfono / WhatsApp: {c['telefono']}\n"
         f"Horarios:\n{horarios}\n"
         f"Urgencias: {c['urgencias']}\n"
         f"Equipo:\n{render_team()}\n"
-        f"Servicios y precios de referencia (siempre como precio desde, sujeto a valoración):\n"
-        f"{render_services()}\n"
-        f"Formas de pago:\n{pagos}\n"
+        f"Servicios (solo estos):\n{render_services()}\n"
+        f"Precios: {PRICE_NOTE}\n"
+        f"Formas de pago:\n{render_payments()}\n"
         f"Aseguradoras: {c['aseguradoras']}\n"
         f"Políticas:\n{politicas}"
     )
@@ -259,6 +217,8 @@ def placeholders() -> dict[str, str]:
         "{{CLINIC_TEAM}}": render_team(),
         "{{CLINIC_PHONE}}": CLINIC["telefono"],
         "{{CLINIC_URGENCIAS}}": CLINIC["urgencias"],
+        "{{CLINIC_PAYMENTS}}": render_payments(),
+        "{{PRICE_NOTE}}": PRICE_NOTE,
         "{{URGENCY_LINE_TEXT}}": URGENCY_LINE_TEXT,
         "{{HANDOFF_MESSAGE}}": HANDOFF_MESSAGE,
     }

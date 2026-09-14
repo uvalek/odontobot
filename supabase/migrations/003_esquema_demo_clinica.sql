@@ -111,10 +111,7 @@ insert into public.crm_atributo_opciones (campo, valor, etiqueta, color, orden) 
     ('etapa_seguimiento', 'cita_agendada',      'Cita agendada',             '#22c55e', 3),
     ('etapa_seguimiento', 'atendido',           'Atendido',                  '#10b981', 4),
     ('etapa_seguimiento', 'handoff',            'Con especialista',          '#ef4444', 5),
-    ('asesor_asignado', 'Dra. Mariana Estrada', 'Dra. Mariana Estrada',      null,      1),
-    ('asesor_asignado', 'Dr. Ricardo Peña',     'Dr. Ricardo Peña',          null,      2),
-    ('asesor_asignado', 'Dra. Sofía Lira',      'Dra. Sofía Lira',           null,      3),
-    ('asesor_asignado', 'Dr. Andrés Cuevas',    'Dr. Andrés Cuevas',         null,      4)
+    ('asesor_asignado', 'Dr. Arturo Ramirez',   'Dr. Arturo Ramirez',        null,      1)
 on conflict (campo, valor) do nothing;
 
 -- ---------------------------------------------------------------------------

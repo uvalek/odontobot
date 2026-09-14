@@ -1,4 +1,4 @@
-from app.clinic_profile import SERVICES, fill
+from app.clinic_profile import NAME, SERVICES, fill
 from app.tools.contactos import merge_notes
 from app.tools.servicios import search
 
@@ -7,25 +7,24 @@ def test_busqueda_vacia_devuelve_todo_el_catalogo():
     assert len(search("")) == len(SERVICES)
 
 
-def test_brackets_devuelve_ortodoncia_primero():
-    res = search("cuánto cuestan los brackets")
-    assert res[0]["id"] == "brackets"
-    assert res[0]["texto_precio"] == "$12,000"
+def test_limpieza_devuelve_limpieza_primero():
+    res = search("cuánto cuesta una limpieza")
+    assert res[0]["id"] == "limpieza"
 
 
-def test_sinonimo_frenos_invisibles():
-    res = search("frenos transparentes")
-    assert res[0]["id"] == "alineadores"
+def test_sinonimo_calza_devuelve_resinas():
+    res = search("se me cayó una calza")
+    assert res[0]["id"] == "resinas"
 
 
-def test_sin_resultados():
-    assert search("hipoteca") == []
+def test_servicio_que_no_existe_no_devuelve_nada():
+    assert search("brackets") == []
 
 
 def test_placeholders_del_perfil_se_rellenan():
     out = fill("Hola desde {{CLINIC_NAME}}. {{CLINIC_URGENCIAS}}")
     assert "{{" not in out
-    assert "Clínica Dental Aurea" in out
+    assert NAME in out
 
 
 def test_notas_bot_se_crean_y_combinan():
@@ -36,4 +35,4 @@ def test_notas_bot_se_crean_y_combinan():
 
 
 def test_notas_humanas_no_se_pisan():
-    assert merge_notes("Paciente prefiere a la Dra. Lira", {"urgencia": "baja"}) is None
+    assert merge_notes("Paciente prefiere cita por la tarde", {"urgencia": "baja"}) is None

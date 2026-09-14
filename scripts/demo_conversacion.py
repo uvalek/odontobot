@@ -38,10 +38,10 @@ SCENARIOS = {
         ],
     },
     2: {
-        "titulo": "Cotización de ortodoncia",
+        "titulo": "Cotización de limpieza",
         "turnos": [
-            "Hola, ¿cuánto cuesta ponerme brackets?",
-            "¿Y qué incluye ese precio?",
+            "Hola, ¿cuánto cuesta una limpieza dental?",
+            "¿Y qué incluye?",
         ],
     },
     3: {
@@ -165,9 +165,11 @@ def evaluate(n: int, bot_msgs: list[str], chat_id: str, world: FakeWorld | None,
         checks.append(("ofrece horario hoy o línea de urgencias", ofrece_hoy or CLINIC["telefono"] in text))
         checks.append(("no receta medicamentos", not any(m in low for m in _MEDICAMENTOS)))
     elif n == 2:
-        checks.append(("menciona $12,000", "12,000" in text))
-        checks.append(("menciona 12 meses de control", "12 meses" in low))
-        checks.append(("aclara que se define en la valoración", "valoración" in low))
+        import re
+
+        checks.append(("no inventa precios", not re.search(r"\$\s?\d", text)))
+        checks.append(("explica qué incluye (sarro/placa)", "sarro" in low or "placa" in low))
+        checks.append(("aclara que el costo se define en la valoración", "valoración" in low))
     elif n == 3:
         disabled = (world.bot_enabled.get(chat_id) is False) if world else bool(live_disabled)
         checks.append(("bot apagado (handoff)", disabled))

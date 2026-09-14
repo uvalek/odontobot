@@ -1,6 +1,6 @@
 # Odontobot — demo de recepcionista virtual para clínicas dentales
 
-Chatbot de atención y calificación de pacientes (Python + FastAPI + LangGraph + Supabase) para WhatsApp, Instagram y Messenger (vía ManyChat), Telegram y chat web. Clínica configurada de ejemplo: **Clínica Dental Aurea** (datos ficticios).
+Chatbot de atención y calificación de pacientes (Python + FastAPI + LangGraph + Supabase) para WhatsApp, Instagram y Messenger (vía ManyChat), Telegram y chat web. Clínica configurada: **Swiss Dental — Dr. Arturo Ramirez** (San Diego Metepec, Tlaxcala), con los datos de su landing. Precios y formas de pago están pendientes de confirmar.
 
 ```
 Webhook → buffer → resolver media → memoria → router → M1|M2|M3|M4 → split → enviar → guardar memoria → extraer datos del paciente
@@ -17,7 +17,7 @@ Todos los datos del negocio viven en **`app/clinic_profile.py`**: nombre, direcc
 | Router | `app/agents/router.py` + `app/prompts/router.md` | Clasifica el mensaje en M1/M2/M3/M4 |
 | M1 Información | `app/agents/m1_faq.py` + `m1_faq.md` | Horarios, ubicación, doctores, pagos, aseguradoras, políticas |
 | M2 Agendamiento | `app/agents/m2_agendamiento.py` + `m2_agendamiento.md` | Urgencias, GATE 1 (motivo, urgencia, nuevo/seguimiento, disponibilidad), cita en Cal.com, GATE 2 (edad/tutor, origen, forma de pago) |
-| M3 Servicios | `app/agents/m3_catalogo.py` + `m3_catalogo.md` | Precios de referencia "desde" con la tool `buscar_servicios` |
+| M3 Servicios | `app/agents/m3_catalogo.py` + `m3_catalogo.md` | Qué incluye cada servicio y cómo se define el costo, con la tool `buscar_servicios` |
 | M4 Seguimiento | `app/agents/m4_seguimiento.py` + `m4_seguimiento.md` | Pacientes que regresan y casos para especialista |
 | Extractor | `app/agents/extractor.py` | Guarda los datos del paciente en `contactos` |
 
@@ -67,7 +67,7 @@ pytest -q
 python scripts/demo_conversacion.py --escenario todos
 ```
 
-Corre 3 escenarios contra el grafo real (canal webchat): urgencia con dolor, cotización de ortodoncia y pregunta de diagnóstico (debe disparar handoff). Por defecto solo necesita `OPENAI_API_KEY`: memoria, CRM y Cal.com se simulan en memoria. Con `--live` usa Supabase y Cal.com reales del `.env`.
+Corre 3 escenarios contra el grafo real (canal webchat): urgencia con dolor, cotización de limpieza y pregunta de diagnóstico (debe disparar handoff). Por defecto solo necesita `OPENAI_API_KEY`: memoria, CRM y Cal.com se simulan en memoria. Con `--live` usa Supabase y Cal.com reales del `.env`.
 
 ## Conectar canales
 
