@@ -15,7 +15,10 @@ _VISION_PROMPT = load_prompt("vision")
 
 
 def _client() -> OpenAI:
-    return OpenAI(api_key=get_settings().openai_api_key)
+    s = get_settings()
+    return OpenAI(
+        api_key=s.openai_api_key, timeout=s.openai_timeout_seconds, max_retries=s.openai_max_retries
+    )
 
 
 async def transcribe_audio(url: str, *, headers: dict[str, str] | None = None) -> str:

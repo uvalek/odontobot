@@ -38,3 +38,12 @@ def test_whatsapp_no_pide_telefono():
 def test_detecta_confirmacion_falsa():
     assert _CONFIRM_RE.search("Listo, tu cita quedó para el martes a las 10:00 AM")
     assert not _CONFIRM_RE.search("¿Qué horario te acomoda para tu cita?")
+
+
+def test_pregunta_directa_por_el_primer_dato_faltante():
+    import json
+
+    from app.agents.m2_agendamiento import ask_missing
+
+    out = json.loads(ask_missing(["correo electrónico", "número de celular a 10 dígitos"]))
+    assert out == ["Para agendar tu cita, ¿me compartes tu correo electrónico?"]

@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     # Piso de max_completion_tokens para que el "pensamiento" interno no deje
     # la respuesta vacía (el router pedía solo 4 tokens).
     openai_reasoning_max_tokens_floor: int = 2000
+    # Tiempo máximo por llamada a OpenAI y reintentos. Sin esto el SDK espera
+    # hasta 10 min por llamada y una respuesta colgada deja el chat sin contestar.
+    openai_timeout_seconds: float = 45.0
+    openai_max_retries: int = 1
 
     supabase_url: str
     supabase_service_key: str

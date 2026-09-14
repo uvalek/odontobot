@@ -40,7 +40,10 @@ _TOOLS = [
 
 
 def _client() -> OpenAI:
-    return OpenAI(api_key=get_settings().openai_api_key)
+    s = get_settings()
+    return OpenAI(
+        api_key=s.openai_api_key, timeout=s.openai_timeout_seconds, max_retries=s.openai_max_retries
+    )
 
 
 async def respond(user_text: str, history: list[dict[str, str]]) -> str:

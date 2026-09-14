@@ -5,9 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import structlog
 from openai import OpenAI
 
 from app.config import get_settings
@@ -16,6 +18,7 @@ from app.security.system_prompt import secure_system_prompt
 from app.tools import agenda, cal, contactos
 
 _SYSTEM = secure_system_prompt("m2_agendamiento")
+log = structlog.get_logger(__name__)
 
 _TOOLS = [
     {
@@ -109,7 +112,10 @@ _TOOLS = [
 
 
 def _client() -> OpenAI:
-    return OpenAI(api_key=get_settings().openai_api_key)
+    s = get_settings()
+    return OpenAI(
+        api_key=s.openai_api_key, timeout=s.openai_timeout_seconds, max_retries=s.openai_max_retries
+    )
 
 
 def _now_cdmx() -> str:
@@ -184,6 +190,18 @@ _CORRECCION = (
 )
 
 
+_PREGUNTA_DATO = {
+    "nombre completo del paciente": "Para agendar tu cita, ¿me compartes tu nombre completo?",
+    "correo electrónico": "Para agendar tu cita, ¿me compartes tu correo electrónico?",
+    "número de celular a 10 dígitos": "Para confirmar tu cita, ¿me compartes tu número de celular a 10 dígitos?",
+}
+
+
+def ask_missing(faltan: list[str]) -> str:
+    """Respuesta directa (sin LLM) pidiendo el primer dato faltante."""
+    return json.dumps([_PREGUNTA_DATO.get(faltan[0], f"Para agendar tu cita, ¿me compartes tu {faltan[0]}?")], ensure_ascii=False)
+
+
 def missing_booking_data(
     args: dict, *, user_texts: list[str], canal: str, user_phone: str
 ) -> list[str]:
@@ -229,8 +247,11 @@ async def respond(
     booked: dict | None = None      # cita creada en este turno (evita duplicados)
     changed = False                 # reagendó o canceló con éxito en este turno
     corrected = False
+    guard_hits = 0                  # veces que el candado frenó book_appointment
+    slots_cache: dict[tuple[str, str], dict] = {}
+    t0 = time.monotonic()
 
-    for _ in range(6):
+    for step in range(6):
         def _call() -> dict:
             resp = _client().chat.completions.create(
                 model=s.openai_model_brain,
@@ -245,6 +266,12 @@ async def respond(
         choice = await asyncio.to_thread(_call)
         msgs.append(choice)
         tool_calls = choice.get("tool_calls") or []
+        log.info(
+            "m2_step",
+            step=step,
+            tools=[tc["function"]["name"] for tc in tool_calls],
+            elapsed=round(time.monotonic() - t0, 1),
+        )
         if not tool_calls:
             content = choice.get("content") or ""
             if not booked and not changed and not corrected and _CONFIRM_RE.search(content):
@@ -259,7 +286,10 @@ async def respond(
             args = json.loads(tc["function"]["arguments"] or "{}")
             try:
                 if name == "consultar_disponibilidad":
-                    result = await agenda.get_slots(args["startTime"], args["endTime"])
+                    key = (args["startTime"], args["endTime"])
+                    if key not in slots_cache:
+                        slots_cache[key] = await agenda.get_slots(*key)
+                    result = slots_cache[key]
                 elif name == "book_appointment" and booked:
                     result = {"status": "already_booked", **booked}
                 elif name == "book_appointment" and (
@@ -267,6 +297,12 @@ async def respond(
                         args, user_texts=user_texts, canal=canal, user_phone=user_phone
                     )
                 ):
+                    guard_hits += 1
+                    if guard_hits >= 2:
+                        # El modelo insiste en agendar sin datos: se corta el ciclo
+                        # y se le pide el dato al paciente directamente.
+                        log.warning("m2_guard_stop", faltan=faltan)
+                        return ask_missing(faltan)
                     result = {
                         "error": "faltan_datos",
                         "faltan": faltan,
@@ -334,4 +370,8 @@ async def respond(
                 }
             )
 
-    return ""
+    log.warning("m2_loop_exhausted", elapsed=round(time.monotonic() - t0, 1))
+    return json.dumps(
+        ["Disculpa, no alcancé a procesar tu solicitud. ¿Me confirmas el horario y tus datos para agendar?"],
+        ensure_ascii=False,
+    )
