@@ -22,8 +22,8 @@ def test_filtra_strings_vacios():
 
 
 def test_string_dentro_de_array_con_emoji():
-    raw = '["¡Hola! 🏡", "¿En qué te ayudo?"]'
-    assert split_response(raw) == ["¡Hola! 🏡", "¿En qué te ayudo?"]
+    raw = '["¡Hola! 🦷", "¿En qué te ayudo?"]'
+    assert split_response(raw) == ["¡Hola! 🦷", "¿En qué te ayudo?"]
 
 
 def test_vacio():

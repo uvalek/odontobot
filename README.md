@@ -1,47 +1,57 @@
-# Chatbot Home Plus — Python + LangGraph
+# Odontobot — demo de recepcionista virtual para clínicas dentales
 
-Migración del chatbot inmobiliario de **n8n a Python**. Conserva el mismo flujo:
+Chatbot de atención y calificación de pacientes (Python + FastAPI + LangGraph + Supabase) para WhatsApp, Instagram y Messenger (vía ManyChat), Telegram y chat web. Clínica configurada de ejemplo: **Clínica Dental Aurea** (datos ficticios).
 
 ```
-Webhook → buffer 25 s → resolver media → memoria → router → M1|M2|M3|M4 → split → enviar → guardar memoria
+Webhook → buffer → resolver media → memoria → router → M1|M2|M3|M4 → split → enviar → guardar memoria → extraer datos del paciente
 ```
 
-Cerebro: **gpt-4.1-mini** (router, M1, M2, M4) + **gpt-4o-mini** (M3 catálogo y visión) + **whisper-1** (audio).
+## Cambiar de clínica: un solo archivo
 
-## Arquitectura
+Todos los datos del negocio viven en **`app/clinic_profile.py`**: nombre, dirección, horarios, línea de urgencias, equipo, servicios y precios de referencia, formas de pago, aseguradoras, políticas y los textos fijos (handoff, fuera de tema, fallbacks). Los prompts los reciben mediante placeholders `{{CLINIC_*}}` que rellena `app/security/system_prompt.py`.
 
-| Capa | Archivo | Responsabilidad |
+## Agentes
+
+| Módulo | Archivo | Qué hace |
 |---|---|---|
-| Webhooks | `app/main.py` | FastAPI: `/webhook/telegram`, `/webhook/manychat` |
-| Canales | `app/channels/telegram.py`, `app/channels/manychat.py` | Parseo entrante + envío saliente |
-| Buffer | `app/buffer.py` | Acumula mensajes 25 s en `message_buffer` (Supabase) |
-| Memoria | `app/memory.py` | Lee/guarda turnos en `chat_memory` (Supabase) |
-| Media | `app/media.py` | Whisper (audio) + Vision gpt-4o-mini (imagen) |
-| Router | `app/agents/router.py` | Clasifica → `M1|M2|M3|M4` |
-| Agentes | `app/agents/m{1,2,3,4}_*.py` | FAQ + RAG / Agendamiento / Catálogo / Seguimiento |
-| Tools | `app/tools/cal.py`, `hubspot.py`, `properties.py` | Cal.com v2, HubSpot, RPC `buscar_propiedades` |
-| Splitter | `app/splitter.py` | Parte el JSON-array de respuesta en mensajes consecutivos |
-| Grafo | `app/graph.py` | LangGraph que orquesta todo |
-| Worker | `app/worker.py` | Recoge mensajes huérfanos del buffer si el web reinició |
+| Router | `app/agents/router.py` + `app/prompts/router.md` | Clasifica el mensaje en M1/M2/M3/M4 |
+| M1 Información | `app/agents/m1_faq.py` + `m1_faq.md` | Horarios, ubicación, doctores, pagos, aseguradoras, políticas |
+| M2 Agendamiento | `app/agents/m2_agendamiento.py` + `m2_agendamiento.md` | Urgencias, GATE 1 (motivo, urgencia, nuevo/seguimiento, disponibilidad), cita en Cal.com, GATE 2 (edad/tutor, origen, forma de pago) |
+| M3 Servicios | `app/agents/m3_catalogo.py` + `m3_catalogo.md` | Precios de referencia "desde" con la tool `buscar_servicios` |
+| M4 Seguimiento | `app/agents/m4_seguimiento.py` + `m4_seguimiento.md` | Pacientes que regresan y casos para especialista |
+| Extractor | `app/agents/extractor.py` | Guarda los datos del paciente en `contactos` |
+
+### Handoff (GATE 3)
+
+Ante preguntas de diagnóstico, medicamentos o dosis, precio cerrado de un caso, quejas o seguimiento de un tratamiento en curso, el agente avisa que un especialista lo atiende y agrega el marcador interno `[[HANDOFF]]`. El grafo (`app/graph.py`) quita el marcador, apaga el bot para esa conversación (`bot_settings.bot_enabled = false`, el mismo toggle del dashboard) y marca la etapa `handoff`. Para reactivar el bot: dashboard (`PATCH /api/conversations/{chat_id}` con `bot_enabled: true`).
+
+### Campos del paciente (demo: columnas reutilizadas)
+
+La traducción vive en `app/tools/contactos.py::LEAD_COLUMNS`:
+
+| Dato | Columna de `contactos` |
+|---|---|
+| Motivo de consulta | `zona_interes` |
+| Edad | `presupuesto_max` |
+| Forma de pago | `tipo_credito` |
+| Fecha de la cita | `fecha_visita` |
+| Urgencia, nuevo/seguimiento, disponibilidad, tutor, cómo se enteró | `notas_internas` (línea `[Bot] …`) |
 
 ## Setup local
 
 ```bash
-# 1. Python 3.11+ y uv (o poetry / pip)
-uv venv
+uv venv --python 3.11
 source .venv/bin/activate
 uv pip install -e ".[dev]"
 
-# 2. Variables
 cp .env.example .env
-# completa OPENAI_API_KEY, SUPABASE_*, CAL_API_KEY, HUBSPOT_TOKEN, TELEGRAM_BOT_TOKEN, MANYCHAT_API_TOKEN
+# completa OPENAI_API_KEY, SUPABASE_*, CAL_API_KEY, CAL_EVENT_TYPE_ID, tokens de canales
 
-# 3. Migraciones en Supabase (en el SQL Editor del proyecto)
-#    - supabase/migrations/001_message_buffer.sql
-#    (RAG `documents` + `match_documents` y memoria `n8n_chat_histories`
-#     ya existen del setup de n8n; no requieren migración nueva.)
+# Esquema de Supabase (SQL Editor o CLI), en orden:
+#   supabase/migrations/001_message_buffer.sql
+#   supabase/migrations/002_channel_flags.sql
+#   supabase/migrations/003_esquema_demo_clinica.sql
 
-# 4. Levantar dev server
 uvicorn app.main:app --reload
 ```
 
@@ -51,7 +61,15 @@ Tests:
 pytest -q
 ```
 
-## Conectar el bot
+## Probar una conversación sin ManyChat
+
+```bash
+python scripts/demo_conversacion.py --escenario todos
+```
+
+Corre 3 escenarios contra el grafo real (canal webchat): urgencia con dolor, cotización de ortodoncia y pregunta de diagnóstico (debe disparar handoff). Por defecto solo necesita `OPENAI_API_KEY`: memoria, CRM y Cal.com se simulan en memoria. Con `--live` usa Supabase y Cal.com reales del `.env`.
+
+## Conectar canales
 
 ### Telegram
 
@@ -59,43 +77,14 @@ pytest -q
 curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook?url=https://TU_DOMINIO/webhook/telegram&secret_token=$TELEGRAM_WEBHOOK_SECRET"
 ```
 
-### ManyChat (WhatsApp)
+### ManyChat (WhatsApp / Instagram / Messenger)
 
-En tu flujo de ManyChat agrega una *External Request* `POST` a `https://TU_DOMINIO/webhook/manychat` con el JSON del subscriber (incluye `id`, `text`, `last_interaction.url` y `last_interaction.mime_type` cuando aplique).
+En el flujo de ManyChat agrega una *External Request* `POST` a `https://TU_DOMINIO/webhook/manychat` con el JSON del subscriber (incluye `id`, `text`, `last_interaction.url` y `last_interaction.mime_type` cuando aplique).
 
-## Deploy en Railway
+### Chat web
 
-1. Conecta el repo, Railway detecta `pyproject.toml` con Nixpacks.
-2. Define las env vars del `.env.example` en el dashboard.
-3. Crea **dos** servicios desde el mismo repo, ambos usando `Procfile`:
-   - `web`: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-   - `worker`: `python -m app.worker`
-4. Apunta los webhooks al dominio público del servicio `web`.
+`POST /api/webchat` con `{"chat_id": "...", "text": "..."}` (header `X-API-Key` si `WEBCHAT_API_KEY` está definido).
 
-## Mapeo n8n → Python (referencia rápida)
+## Panel de canales
 
-| Concepto n8n | Aquí |
-|---|---|
-| Telegram Trigger | `POST /webhook/telegram` (`app/main.py`) |
-| Webhook genérico WhatsApp | `POST /webhook/manychat` (`app/main.py`) |
-| Redis Insertar + Wait 25 s + Switch + Delete | `buffer.insert_message` + `buffer.schedule_flush` |
-| Postgres Chat Memory (`n8n_chat_histories`) | `memory.load_history` / `memory.append` |
-| OpenAI Whisper / Vision | `media.transcribe_audio` / `media.describe_image` |
-| ROUTER | `agents/router.py` |
-| M1 + Supabase Vector Store | `agents/m1_faq.py` (RPC `match_documents`) |
-| M2 + subworkflows DISPONIBILIDAD/AGENDAMIENTO/REAGENDADOR | `agents/m2_agendamiento.py` + `tools/cal.py` + `tools/hubspot.py` |
-| M3 HTTP Tool | `agents/m3_catalogo.py` + `tools/properties.py` |
-| M4 | `agents/m4_seguimiento.py` |
-| Code JSON Parser + Loop Over Items + Wait 1s | `splitter.split_response` + `channels/*.send_messages` |
-
-## Migración por fases
-
-1. Apunta el webhook de **un solo número de prueba** al servicio Python; el resto sigue en n8n.
-2. Verifica paridad: FAQ, agendamiento real (con HubSpot + Cal.com), catálogo, audio, imagen.
-3. Mueve el resto del tráfico y apaga los workflows de n8n.
-
-## Notas
-
-- El buffer usa `asyncio.create_task` + un `asyncio.Lock` por chat; si el contenedor se reinicia mid-sleep el `worker` reaplana mensajes pendientes con `created_at < now() - 25 s`.
-- ManyChat outbound usa `sendContent` con `data.version: v2`. Si tu cuenta usa otro endpoint (Send Flow), ajusta `app/channels/manychat.py`.
-- M1 espera que el RPC `match_documents` ya exista en Supabase (lo crea la extensión `pgvector` de tu setup actual).
+`/panel` enciende o apaga el bot por canal (token `TEST_ARM_TOKEN`).

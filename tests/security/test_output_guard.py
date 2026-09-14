@@ -6,7 +6,7 @@ from app.security import output_guard
 
 
 def test_chunks_normales_pasan() -> None:
-    chunks = ["Hola, tengo una casa en Apizaco", "$1,200,000 MXN"]
+    chunks = ["La limpieza dental cuesta desde $800", "¿Te agendo una valoración?"]
     out, motivos = output_guard.sanitize_chunks(chunks)
     assert out == chunks
     assert motivos == []

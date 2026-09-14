@@ -11,10 +11,10 @@ from app.security.input_guard import Decision
 @pytest.mark.parametrize(
     "text",
     [
-        "Hola, quiero ver una casa en Apizaco",
-        "¿Tienen departamentos por Huamantla?",
-        "Cuánto cuesta el de Xaloztoc",
-        "Quiero agendar visita el jueves a las 4pm",
+        "Hola, quiero una cita para limpieza dental",
+        "¿Tienen alineadores transparentes?",
+        "Cuánto cuesta el blanqueamiento",
+        "Quiero agendar valoración el jueves a las 4pm",
         "",  # vacío también es SAFE (caller decide)
     ],
 )
@@ -51,7 +51,7 @@ def test_combinacion_de_patrones_es_block() -> None:
 
 def test_caracteres_invisibles_se_eliminan() -> None:
     # U+200B (zero-width space) entre palabras
-    text = "hola​quiero​una​casa"
+    text = "hola​quiero​una​cita"
     result = input_guard.classify(text)
     assert result.invisible_chars_stripped is True
     assert "​" not in result.sanitized
