@@ -47,3 +47,13 @@ def test_pregunta_directa_por_el_primer_dato_faltante():
 
     out = json.loads(ask_missing(["correo electrónico", "número de celular a 10 dígitos"]))
     assert out == ["Para agendar tu cita, ¿me compartes tu correo electrónico?"]
+
+
+def test_estado_de_cita_se_describe_en_hora_mx():
+    from app.agents.m2_agendamiento import _estado_cita_texto
+
+    txt = _estado_cita_texto(
+        {"fecha_visita": "2026-09-17T17:00:00+00:00", "nombre": "Mariana Solís", "correo": "m@x.com"}
+    )
+    assert "jueves 17 de septiembre de 2026 a las 11:00 AM" in txt
+    assert "NO llames book_appointment" in txt and "m@x.com" in txt

@@ -319,6 +319,49 @@ async def mark_handoff(chat_id: str, canal: str | None = None, nota: str | None 
     )
 
 
+async def cita_actual(chat_id: str) -> dict[str, Any] | None:
+    """Cita futura ya agendada en esta conversación (según Supabase) o None."""
+    if not chat_id:
+        return None
+    res = await asyncio.to_thread(
+        lambda: (
+            supabase()
+            .table("contactos")
+            .select("nombre, correo, telefono, etapa_seguimiento, fecha_visita")
+            .eq("chat_id", chat_id)
+            .limit(1)
+            .execute()
+        )
+    )
+    rows = res.data or []
+    if not rows or rows[0].get("etapa_seguimiento") != "cita_agendada" or not rows[0].get("fecha_visita"):
+        return None
+    row = rows[0]
+    try:
+        fecha = datetime.fromisoformat(str(row["fecha_visita"]).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if fecha.tzinfo is None or fecha <= datetime.now(fecha.tzinfo):
+        return None
+    return {**row, "fecha_visita": fecha.isoformat()}
+
+
+async def actualizar_cita(chat_id: str, *, nueva_fecha_iso: str | None, cancelada: bool = False) -> None:
+    """Refleja en Supabase y GHL un reagendado o una cancelación."""
+    if not chat_id:
+        return
+    update: dict[str, Any] = (
+        {"fecha_visita": None, LEAD_COLUMNS["etapa_seguimiento"]: "calificado"}
+        if cancelada
+        else {"fecha_visita": fecha_cita_from_iso_utc(nueva_fecha_iso or ""), LEAD_COLUMNS["etapa_seguimiento"]: "cita_agendada"}
+    )
+    await asyncio.to_thread(
+        lambda: supabase().table("contactos").update(update).eq("chat_id", chat_id).execute()
+    )
+    log.info("contacto_cita_actualizada", chat_id=chat_id, cancelada=cancelada)
+    await ghl_sync.sync_contact(chat_id=chat_id, tags=["cita-cancelada" if cancelada else "cita-reagendada"])
+
+
 def fecha_cita_from_iso_utc(iso_utc: str) -> str | None:
     """Devuelve un ISO timestamptz que Supabase puede insertar tal cual."""
     if not iso_utc:

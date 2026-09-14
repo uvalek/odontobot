@@ -93,7 +93,7 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "cambioCita",
-            "description": "Reagenda o cancela una cita ya existente.",
+            "description": "Reagenda o cancela la cita que el paciente ya tiene. Si el sistema te dio ESTADO DE LA CITA no necesitas pedir el correo.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -104,7 +104,7 @@ _TOOLS = [
                     "cancelDate": {"type": "string"},
                     "reason": {"type": "string"},
                 },
-                "required": ["objetivo", "email", "reason"],
+                "required": ["objetivo"],
             },
         },
     },
@@ -123,10 +123,18 @@ def _now_cdmx() -> str:
     return dt.strftime("%A %d de %B de %Y, %I:%M %p")
 
 
-async def _cambio_cita(args: dict, user_phone: str) -> dict:
-    bookings = await agenda.list_bookings(args["email"])
+async def _cambio_cita(args: dict, *, chat_id: str, estado: dict | None) -> dict:
+    email = (args.get("email") or (estado or {}).get("correo") or "").strip()
+    if not email:
+        return {"error": "falta_correo", "instruccion": "Pide al paciente el correo con el que agendó."}
+    if args["objetivo"] == "reagendar" and not args.get("rescheduleDate"):
+        return {
+            "error": "falta_horario",
+            "instruccion": "Primero consulta disponibilidad, muestra horarios y usa como rescheduleDate el start exacto que elija el paciente.",
+        }
+    bookings = await agenda.list_bookings(email)
     if not bookings:
-        return {"status": "not_found", "message": "No se encontró ninguna cita."}
+        return {"status": "not_found", "message": "No se encontró ninguna cita con ese correo."}
 
     target = bookings[0]
     if len(bookings) > 1 and args.get("rescheduleDate"):
@@ -138,9 +146,26 @@ async def _cambio_cita(args: dict, user_phone: str) -> dict:
 
     if args["objetivo"] == "reagendar":
         result = await agenda.reschedule(uid, args["rescheduleDate"])
-        return {"status": "rescheduled", "raw": result}
-    result = await agenda.cancel(uid, args.get("reason", ""))
+        await contactos.actualizar_cita(chat_id, nueva_fecha_iso=args["rescheduleDate"])
+        return {"status": "rescheduled", "nueva_fecha": args["rescheduleDate"], "raw": result}
+    result = await agenda.cancel(uid, args.get("reason") or "no especificada")
+    await contactos.actualizar_cita(chat_id, nueva_fecha_iso=None, cancelada=True)
     return {"status": "cancelled", "raw": result}
+
+
+def _estado_cita_texto(estado: dict) -> str:
+    fecha = estado["fecha_visita"]
+    local = datetime.fromisoformat(fecha).astimezone(ZoneInfo("America/Mexico_City"))
+    dia = cal._format_date_mx(local.strftime("%Y-%m-%d"))
+    hora = local.strftime("%I:%M %p").lstrip("0")
+    return (
+        "\n\n📌 ESTADO DE LA CITA (dato del sistema, confiable):\n"
+        f"El paciente YA TIENE una cita agendada para el {dia} a las {hora} (hora CDMX), "
+        f"a nombre de {estado.get('nombre') or 'el paciente'}, correo {estado.get('correo') or 'no registrado'}.\n"
+        "- NO llames book_appointment otra vez para esta cita.\n"
+        "- Si el paciente responde datos del GATE 2 (edad, tutor, cómo se enteró, forma de pago), agradécelos y pregunta el siguiente que falte.\n"
+        "- Si quiere reagendar o cancelar, usa cambioCita sin volver a pedir nombre ni correo."
+    )
 
 
 _PHONE_INSTRUCTION_STEP_AUTO = (
@@ -239,6 +264,13 @@ async def respond(
 ) -> str:
     s = get_settings()
     system = _build_system(canal)
+    try:
+        estado = await contactos.cita_actual(chat_id)
+    except Exception as e:  # noqa: BLE001
+        log.warning("m2_estado_cita_failed", error=str(e)[:200])
+        estado = None
+    if estado:
+        system += _estado_cita_texto(estado)
     msgs: list[dict] = [{"role": "system", "content": system}]
     msgs.extend(history[-15:])
     msgs.append({"role": "user", "content": user_text})
@@ -290,8 +322,15 @@ async def respond(
                     if key not in slots_cache:
                         slots_cache[key] = await agenda.get_slots(*key)
                     result = slots_cache[key]
-                elif name == "book_appointment" and booked:
-                    result = {"status": "already_booked", **booked}
+                elif name == "book_appointment" and (booked or estado):
+                    result = {
+                        "status": "already_booked",
+                        "cita": booked or estado,
+                        "instruccion": (
+                            "La cita YA está agendada; no se creó otra. No digas que hubo un problema. "
+                            "Continúa la conversación (GATE 2) o usa cambioCita si quiere cambiarla."
+                        ),
+                    }
                 elif name == "book_appointment" and (
                     faltan := missing_booking_data(
                         args, user_texts=user_texts, canal=canal, user_phone=user_phone
@@ -355,7 +394,7 @@ async def respond(
                     booked = booking
                     result = booking
                 elif name == "cambioCita":
-                    result = await _cambio_cita(args, user_phone)
+                    result = await _cambio_cita(args, chat_id=chat_id, estado=estado)
                     changed = result.get("status") in ("rescheduled", "cancelled")
                 else:
                     result = {"error": f"unknown tool {name}"}

@@ -36,6 +36,7 @@ REGLA DE CONTINUIDAD — AGENDAMIENTO EN CURSO (revisa el historial):
   * "juan@gmail.com" / "2461234567" → M2
   * "Es mi primera vez" / "No tengo dolor" → M2
 - Excepción: si esa respuesta además pide diagnóstico, medicamento o es una queja → M4.
+- Reagendar, cambiar o cancelar una cita existente ("necesito cambiar mi cita", "ya no puedo ir", "quiero cancelar") → SIEMPRE M2, nunca M4.
 
 REGLA DOMINANTE — MENSAJE COMBINADO (2+ frases en un solo turno):
 - Si CUALQUIER frase pide diagnóstico, medicamento, dosis, precio cerrado de su caso, o es una queja → SIEMPRE M4.
