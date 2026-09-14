@@ -30,7 +30,17 @@ MX = ZoneInfo("America/Mexico_City")
 
 
 class GHLError(RuntimeError):
-    pass
+    def __init__(self, message: str, status: int = 0, data: dict | None = None):
+        super().__init__(message)
+        self.status = status
+        self.data = data or {}
+
+    @property
+    def duplicate_field(self) -> str | None:
+        """Campo que choca con otro contacto ("phone" / "email"), si aplica."""
+        if "duplicated contacts" not in str(self.data.get("message", "")):
+            return None
+        return (self.data.get("meta") or {}).get("matchingField") or "unknown"
 
 
 def enabled() -> bool:
@@ -66,7 +76,15 @@ async def _request(
     if r.status_code >= 400:
         body = r.text[:800]
         log.error("ghl_api_error", method=method, path=path.split("?")[0], status=r.status_code, body=body)
-        raise GHLError(f"GHL {method} {path.split('?')[0]} {r.status_code}: {body}")
+        try:
+            data = r.json()
+        except ValueError:
+            data = {}
+        raise GHLError(
+            f"GHL {method} {path.split('?')[0]} {r.status_code}: {body}",
+            status=r.status_code,
+            data=data if isinstance(data, dict) else {},
+        )
     if not r.content:
         return {}
     return r.json()
@@ -245,7 +263,9 @@ def _contact_payload(
     if correo:
         payload["email"] = correo
     if telefono:
-        payload["phone"] = telefono
+        from app.tools.cal import _normalize_phone
+
+        payload["phone"] = _normalize_phone(telefono) or telefono
     if custom_fields:
         payload["customFields"] = custom_fields
     if source:

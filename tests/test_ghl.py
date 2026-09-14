@@ -35,3 +35,37 @@ def test_campos_personalizados_usan_etiquetas_y_ids():
     assert {"id": "f3", "field_value": 34} in out
     assert all(f["id"] != "f4" for f in out)  # vacío no se manda
     assert len(out) == 3  # forma_pago no tiene id -> se omite
+
+
+def test_error_de_duplicado_expone_el_campo():
+    err = ghl.GHLError(
+        "dup",
+        status=400,
+        data={"message": "This location does not allow duplicated contacts.", "meta": {"matchingField": "phone"}},
+    )
+    assert err.duplicate_field == "phone"
+    assert ghl.GHLError("otro", status=400, data={"message": "x"}).duplicate_field is None
+
+
+async def test_actualizar_omite_telefono_duplicado(monkeypatch):
+    from app.tools import ghl_sync
+
+    calls = []
+
+    async def fake_update(contact_id, **fields):
+        calls.append(fields)
+        if fields.get("telefono"):
+            raise ghl.GHLError(
+                "dup", status=400,
+                data={"message": "This location does not allow duplicated contacts.",
+                      "meta": {"matchingField": "phone", "contactName": "Alek"}},
+            )
+
+    monkeypatch.setattr(ghl, "update_contact", fake_update)
+    notes = await ghl_sync._update_skipping_duplicates("c1", nombre="Adam", correo="a@b.com", telefono="2411363909")
+    assert calls[-1]["telefono"] is None and calls[-1]["correo"] == "a@b.com"
+    assert "Alek" in notes[0]
+
+
+def test_telefono_se_normaliza_a_e164():
+    assert ghl._contact_payload(telefono="2411363909")["phone"] == "+522411363909"

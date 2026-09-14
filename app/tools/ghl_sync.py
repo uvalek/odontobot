@@ -70,6 +70,34 @@ async def _save_ghl_id(row_id: Any, chat_id: str, canal: str, contact_id: str) -
     await asyncio.to_thread(lambda: q.execute())
 
 
+_FIELD_LABEL = {"phone": "El teléfono", "email": "El correo"}
+
+
+async def _update_skipping_duplicates(contact_id: str, **fields: Any) -> list[str]:
+    """Actualiza el contacto. Si GHL rechaza un teléfono o correo porque ya
+    pertenece a otro contacto, reintenta sin ese dato y devuelve una nota
+    explicándolo (la cita no debe fallar por eso)."""
+    notes: list[str] = []
+    arg_by_field = {"phone": "telefono", "email": "correo"}
+    for _ in range(3):
+        try:
+            await ghl.update_contact(contact_id, **fields)
+            return notes
+        except ghl.GHLError as e:
+            field = e.duplicate_field
+            arg = arg_by_field.get(field or "")
+            if not arg or not fields.get(arg):
+                raise
+            other = (e.data.get("meta") or {}).get("contactName") or "otro contacto"
+            notes.append(
+                f"{_FIELD_LABEL[field]} que dio el paciente en el chat ({fields[arg]}) ya pertenece "
+                f"al contacto \"{other}\" en GHL; no se agregó a este contacto."
+            )
+            log.warning("ghl_duplicate_skipped", contact_id=contact_id, field=field)
+            fields = {**fields, arg: None}
+    return notes
+
+
 async def sync_contact(
     *,
     chat_id: str,
@@ -104,14 +132,36 @@ async def sync_contact(
         custom = ghl.build_custom_fields(data, field_ids)
 
         new_contact = False
+        conflict_notes: list[str] = []
         if contact_id:
-            await ghl.update_contact(
+            conflict_notes = await _update_skipping_duplicates(
                 contact_id, nombre=nombre, correo=correo, telefono=telefono, custom_fields=custom
             )
         elif correo or telefono:
-            contact = await ghl.upsert_contact(
-                nombre=nombre, correo=correo, telefono=telefono, custom_fields=custom, source=SOURCE
-            )
+            try:
+                contact = await ghl.upsert_contact(
+                    nombre=nombre, correo=correo, telefono=telefono, custom_fields=custom, source=SOURCE
+                )
+            except ghl.GHLError as e:
+                # Correo y teléfono pertenecen a contactos distintos: se crea con
+                # el correo (o el teléfono) y se deja nota del dato que choca.
+                field = e.duplicate_field
+                if field not in ("phone", "email") or not (correo and telefono):
+                    raise
+                keep_email = field == "phone"
+                other = (e.data.get("meta") or {}).get("contactName") or "otro contacto"
+                dropped = telefono if keep_email else correo
+                conflict_notes.append(
+                    f"{_FIELD_LABEL[field]} que dio el paciente en el chat ({dropped}) ya pertenece "
+                    f"al contacto \"{other}\" en GHL; no se agregó a este contacto."
+                )
+                contact = await ghl.upsert_contact(
+                    nombre=nombre,
+                    correo=correo if keep_email else None,
+                    telefono=None if keep_email else telefono,
+                    custom_fields=custom,
+                    source=SOURCE,
+                )
             contact_id, new_contact = contact.get("id"), True
         elif nombre or force:
             contact = await ghl.create_contact(
@@ -130,6 +180,8 @@ async def sync_contact(
         all_tags = [t for t in ([BASE_TAG, canal] if new_contact else []) + list(tags) if t]
         if all_tags:
             await ghl.add_tags(contact_id, all_tags)
+        if force and conflict_notes:
+            note = "\n".join([*conflict_notes, *( [note] if note else [] )])
         if note:
             await ghl.add_note(contact_id, note)
         log.info("ghl_contact_synced", chat_id=chat_id, contact_id=contact_id, new=new_contact, tags=all_tags)
