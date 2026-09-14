@@ -36,6 +36,11 @@ class GHLError(RuntimeError):
         self.data = data or {}
 
     @property
+    def contact_not_found(self) -> bool:
+        """El contacto ya no existe en GHL (borrado a mano, fusionado, etc.)."""
+        return self.status == 404 or "not found" in str(self.data.get("message", "")).lower()
+
+    @property
     def duplicate_field(self) -> str | None:
         """Campo que choca con otro contacto ("phone" / "email"), si aplica."""
         if "duplicated contacts" not in str(self.data.get("message", "")):

@@ -98,6 +98,48 @@ async def _update_skipping_duplicates(contact_id: str, **fields: Any) -> list[st
     return notes
 
 
+async def _create_contact(
+    *,
+    nombre: str | None,
+    correo: str | None,
+    telefono: str | None,
+    custom: list[dict[str, Any]],
+    canal: str,
+    chat_id: str,
+    conflict_notes: list[str],
+) -> str | None:
+    """Crea el contacto en GHL. Con correo o teléfono usa upsert (dedupe de GHL);
+    si ambos chocan con contactos distintos, conserva uno y deja nota del otro."""
+    if not (correo or telefono):
+        contact = await ghl.create_contact(
+            nombre=nombre or f"Visitante {canal or 'web'} {chat_id[-6:]}", custom_fields=custom, source=SOURCE
+        )
+        return contact.get("id")
+    try:
+        contact = await ghl.upsert_contact(
+            nombre=nombre, correo=correo, telefono=telefono, custom_fields=custom, source=SOURCE
+        )
+    except ghl.GHLError as e:
+        field = e.duplicate_field
+        if field not in ("phone", "email") or not (correo and telefono):
+            raise
+        keep_email = field == "phone"
+        other = (e.data.get("meta") or {}).get("contactName") or "otro contacto"
+        dropped = telefono if keep_email else correo
+        conflict_notes.append(
+            f"{_FIELD_LABEL[field]} que dio el paciente en el chat ({dropped}) ya pertenece "
+            f"al contacto \"{other}\" en GHL; no se agregó a este contacto."
+        )
+        contact = await ghl.upsert_contact(
+            nombre=nombre,
+            correo=correo if keep_email else None,
+            telefono=None if keep_email else telefono,
+            custom_fields=custom,
+            source=SOURCE,
+        )
+    return contact.get("id")
+
+
 async def sync_contact(
     *,
     chat_id: str,
@@ -134,44 +176,25 @@ async def sync_contact(
         new_contact = False
         conflict_notes: list[str] = []
         if contact_id:
-            conflict_notes = await _update_skipping_duplicates(
-                contact_id, nombre=nombre, correo=correo, telefono=telefono, custom_fields=custom
-            )
-        elif correo or telefono:
             try:
-                contact = await ghl.upsert_contact(
-                    nombre=nombre, correo=correo, telefono=telefono, custom_fields=custom, source=SOURCE
+                conflict_notes = await _update_skipping_duplicates(
+                    contact_id, nombre=nombre, correo=correo, telefono=telefono, custom_fields=custom
                 )
             except ghl.GHLError as e:
-                # Correo y teléfono pertenecen a contactos distintos: se crea con
-                # el correo (o el teléfono) y se deja nota del dato que choca.
-                field = e.duplicate_field
-                if field not in ("phone", "email") or not (correo and telefono):
+                if not e.contact_not_found:
                     raise
-                keep_email = field == "phone"
-                other = (e.data.get("meta") or {}).get("contactName") or "otro contacto"
-                dropped = telefono if keep_email else correo
-                conflict_notes.append(
-                    f"{_FIELD_LABEL[field]} que dio el paciente en el chat ({dropped}) ya pertenece "
-                    f"al contacto \"{other}\" en GHL; no se agregó a este contacto."
-                )
-                contact = await ghl.upsert_contact(
-                    nombre=nombre,
-                    correo=correo if keep_email else None,
-                    telefono=None if keep_email else telefono,
-                    custom_fields=custom,
-                    source=SOURCE,
-                )
-            contact_id, new_contact = contact.get("id"), True
-        elif nombre or force:
-            contact = await ghl.create_contact(
-                nombre=nombre or f"Visitante {canal or 'web'} {chat_id[-6:]}",
-                custom_fields=custom,
-                source=SOURCE,
+                # El contacto se borró en GHL: se olvida el id y se crea de nuevo.
+                log.warning("ghl_contact_missing_recreating", chat_id=chat_id, contact_id=contact_id)
+                contact_id = None
+
+        if not contact_id:
+            if not (correo or telefono or nombre or force):
+                return None  # todavía no hay forma de identificar al paciente
+            contact_id = await _create_contact(
+                nombre=nombre, correo=correo, telefono=telefono, custom=custom,
+                canal=canal, chat_id=chat_id, conflict_notes=conflict_notes,
             )
-            contact_id, new_contact = contact.get("id"), True
-        else:
-            return None  # todavía no hay forma de identificar al paciente
+            new_contact = True
 
         if not contact_id:
             return None

@@ -69,3 +69,46 @@ async def test_actualizar_omite_telefono_duplicado(monkeypatch):
 
 def test_telefono_se_normaliza_a_e164():
     assert ghl._contact_payload(telefono="2411363909")["phone"] == "+522411363909"
+
+
+def test_contacto_borrado_en_ghl_se_detecta():
+    err = ghl.GHLError("x", status=400, data={"message": "Contact not found for id:abc"})
+    assert err.contact_not_found
+    assert not ghl.GHLError("x", status=400, data={"message": "otro"}).contact_not_found
+
+
+async def test_sync_recrea_contacto_si_fue_borrado(monkeypatch):
+    from app.tools import ghl_sync
+
+    saved = {}
+
+    async def fake_row(chat_id):
+        return {"id": 7, "chat_id": chat_id, "canal": "webchat", "ghl_contact_id": "viejo",
+                "nombre": "Adam", "correo": "a@b.com"}
+
+    async def fake_update(contact_id, **kw):
+        raise ghl.GHLError("nf", status=400, data={"message": "Contact not found for id:viejo"})
+
+    async def fake_upsert(**kw):
+        return {"id": "nuevo"}
+
+    async def fake_save(row_id, chat_id, canal, contact_id):
+        saved["id"] = contact_id
+
+    async def noop(*a, **k):
+        return None
+
+    async def no_fields():
+        return {}
+
+    monkeypatch.setattr(ghl, "enabled", lambda: True)
+    monkeypatch.setattr(ghl_sync, "_row", fake_row)
+    monkeypatch.setattr(ghl, "update_contact", fake_update)
+    monkeypatch.setattr(ghl, "upsert_contact", fake_upsert)
+    monkeypatch.setattr(ghl, "custom_field_ids", no_fields)
+    monkeypatch.setattr(ghl, "add_tags", noop)
+    monkeypatch.setattr(ghl, "add_note", noop)
+    monkeypatch.setattr(ghl_sync, "_save_ghl_id", fake_save)
+
+    cid = await ghl_sync.sync_contact(chat_id="web-1", values={"telefono": "2411249120"}, force=True)
+    assert cid == "nuevo" and saved["id"] == "nuevo"
