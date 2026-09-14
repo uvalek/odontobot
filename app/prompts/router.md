@@ -27,6 +27,16 @@ REGLA CLAVE M2 vs M3:
 - "Sí, agéndame" / "quiero la cita" / "sí, agenda" → M2
 - Cualquier fecha u hora para una cita ("el lunes en la mañana", "mañana a las 4pm", "hoy mismo") → M2
 
+REGLA DE CONTINUIDAD — AGENDAMIENTO EN CURSO (revisa el historial):
+- Si el ÚLTIMO mensaje del asistente le pidió al paciente un dato del proceso de cita (motivo, si tiene dolor, si es primera vez, día u horario, nombre, correo, celular, edad, nombre del tutor, cómo se enteró, forma de pago) y el paciente responde ese dato → SIEMPRE M2, aunque la respuesta parezca general.
+- Ejemplos (cuando el asistente acaba de preguntar eso):
+  * "Tengo 34 años" → M2
+  * "Me enteré por Instagram" → M2
+  * "Pagaría de contado" / "a meses" → M2
+  * "juan@gmail.com" / "2461234567" → M2
+  * "Es mi primera vez" / "No tengo dolor" → M2
+- Excepción: si esa respuesta además pide diagnóstico, medicamento o es una queja → M4.
+
 REGLA DOMINANTE — MENSAJE COMBINADO (2+ frases en un solo turno):
 - Si CUALQUIER frase pide diagnóstico, medicamento, dosis, precio cerrado de su caso, o es una queja → SIEMPRE M4.
 - Si no, y CUALQUIER frase tiene intención de AGENDAR o describe una URGENCIA → SIEMPRE M2, aunque las otras frases sean de precios.
