@@ -1,4 +1,4 @@
-"""M2 — Captación y agendamiento de visitas. Tool calling con Cal.com + HubSpot."""
+"""M2 — Calificación y agendamiento de citas. Tool calling con Cal.com + CRM `contactos`."""
 
 from __future__ import annotations
 
@@ -36,23 +36,38 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "book_appointment",
-            "description": "Reserva una visita en Cal.com y guarda el lead en la tabla `contactos` de Supabase.",
+            "description": "Reserva una cita en Cal.com y guarda al paciente en la tabla `contactos` de Supabase.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "startTime": {"type": "string"},
-                    "userName": {"type": "string"},
+                    "userName": {"type": "string", "description": "Nombre completo del paciente."},
                     "userEmail": {"type": "string"},
-                    "zona_interes": {"type": "string"},
-                    "presupuesto_max": {"type": "string"},
-                    "tipo_credito": {"type": "string"},
-                    "propiedad_interesada_id": {
-                        "type": "integer",
-                        "description": "ID exacto de la propiedad (columna `id` de propiedades). Úsalo si lo conoces del historial.",
-                    },
-                    "propiedad_interesada_nombre": {
+                    "motivo_consulta": {
                         "type": "string",
-                        "description": "Nombre o zona de la propiedad como fallback si no tienes el ID. El servidor resolverá el ID por similitud.",
+                        "enum": [
+                            "dolor_urgencia",
+                            "limpieza_revision",
+                            "estetica_blanqueamiento",
+                            "ortodoncia",
+                            "implantes_protesis",
+                            "odontopediatria",
+                            "",
+                        ],
+                        "description": "Categoría del motivo de consulta (nunca un diagnóstico).",
+                    },
+                    "nivel_urgencia": {
+                        "type": "string",
+                        "enum": ["alta", "media", "baja", ""],
+                        "description": "alta = dolor fuerte, golpe o inflamación.",
+                    },
+                    "tipo_paciente": {
+                        "type": "string",
+                        "enum": ["nuevo", "seguimiento", ""],
+                    },
+                    "disponibilidad_preferida": {
+                        "type": "string",
+                        "description": "Día y rango de horario que prefirió el paciente (ej. martes por la tarde).",
                     },
                     "userPhone": {
                         "type": "string",
@@ -63,10 +78,9 @@ _TOOLS = [
                     "startTime",
                     "userName",
                     "userEmail",
-                    "zona_interes",
-                    "presupuesto_max",
-                    "tipo_credito",
-                    "propiedad_interesada_nombre",
+                    "motivo_consulta",
+                    "nivel_urgencia",
+                    "tipo_paciente",
                 ],
             },
         },
@@ -75,7 +89,7 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "cambioCita",
-            "description": "Reagenda o cancela una visita ya existente.",
+            "description": "Reagenda o cancela una cita ya existente.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -130,8 +144,8 @@ _PHONE_INSTRUCTION_RULE_AUTO = (
 )
 _PHONE_INSTRUCTION_STEP_ASK = (
     "\n3. Número de celular a 10 dígitos (ej: 2414568392). NO pidas LADA ni el +52: "
-    "nosotros le ponemos el +52 automáticamente. Es obligatorio para que el asesor "
-    "pueda confirmar la visita."
+    "nosotros le ponemos el +52 automáticamente. Es obligatorio para que recepción "
+    "pueda confirmar la cita."
 )
 _PHONE_INSTRUCTION_RULE_ASK = (
     "- Pide el celular SOLO a 10 dígitos (ej: 2414568392). NUNCA pidas LADA "
@@ -210,16 +224,14 @@ async def respond(
                             nombre=args["userName"],
                             correo=args["userEmail"],
                             telefono=effective_phone or None,
-                            zona_interes=args.get("zona_interes") or None,
-                            presupuesto_max=args.get("presupuesto_max"),
-                            tipo_credito=args.get("tipo_credito") or None,
-                            fecha_visita_iso=contactos.fecha_visita_from_iso_utc(
-                                args["startTime"]
+                            motivo_consulta=args.get("motivo_consulta") or None,
+                            nivel_urgencia=args.get("nivel_urgencia") or None,
+                            tipo_paciente=args.get("tipo_paciente") or None,
+                            disponibilidad_preferida=(
+                                args.get("disponibilidad_preferida") or None
                             ),
-                            propiedad_interesada_id=args.get("propiedad_interesada_id"),
-                            propiedad_interesada_nombre=(
-                                args.get("propiedad_interesada_nombre")
-                                or args.get("zona_interes")  # fallback si LLM olvidó el nombre
+                            fecha_cita_iso=contactos.fecha_cita_from_iso_utc(
+                                args["startTime"]
                             ),
                             chat_id=chat_id or None,
                             canal=canal or None,

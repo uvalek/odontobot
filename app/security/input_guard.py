@@ -30,6 +30,8 @@ import unicodedata
 from dataclasses import dataclass
 from enum import Enum
 
+from app import clinic_profile
+
 
 class Decision(str, Enum):
     SAFE = "SAFE"
@@ -197,6 +199,4 @@ def classify(text: str) -> GuardResult:
 
 
 # Mensaje neutro que se manda al usuario cuando bloqueamos.
-BLOCK_RESPONSE_TEXTS: list[str] = [
-    "Solo puedo ayudarte con dudas sobre propiedades de Luce Real Estate (zonas, precios, agendar visitas, etc.). ¿En qué de eso te puedo ayudar?"
-]
+BLOCK_RESPONSE_TEXTS: list[str] = [clinic_profile.OUT_OF_SCOPE_TEXT]

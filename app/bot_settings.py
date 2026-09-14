@@ -3,10 +3,10 @@
 Tabla: `bot_settings(chat_id PK, channel, bot_enabled, last_read_at, updated_at)`.
 
 - `is_enabled(chat_id)` devuelve True por default si no hay fila (asi el bot
-  responde a contactos nuevos hasta que un asesor lo apague desde el dashboard).
+  responde a contactos nuevos hasta que el personal lo apague desde el dashboard o se active el handoff).
 - `set_enabled(chat_id, enabled, channel)` upsert.
 - `mark_read(chat_id)` actualiza last_read_at a NOW() — usado por el dashboard
-  cuando el asesor abre la conversacion.
+  cuando el personal de la clinica abre la conversacion.
 - `unread_count(chat_id)` cuenta mensajes humanos despues del last_read_at.
 """
 

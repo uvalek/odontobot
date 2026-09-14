@@ -52,7 +52,7 @@ async def append(
     """Guarda un mensaje en n8n_chat_histories.
 
     `metadata` se mete en `data.additional_kwargs` y permite distinguir
-    mensajes manuales de asesor (`{"sender": "advisor", "advisor_name": "Ana"}`)
+    mensajes manuales del personal de la clinica (`{"sender": "advisor", "advisor_name": "Ana"}`)
     de los del bot. El dashboard lo lee para pintar la etiqueta correcta.
     """
     if not content:

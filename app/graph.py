@@ -15,12 +15,13 @@ from langgraph.graph import END, StateGraph
 from app.agents import extractor, m1_faq, m2_agendamiento, m3_catalogo, m4_seguimiento, router
 from app.channels import manychat as manychat_chan
 from app.channels import telegram as telegram_chan
-from app import memory
+from app import bot_settings, clinic_profile, memory
 from app.config import get_settings
 from app.media import describe_image, transcribe_audio
 from app.security import input_guard, output_guard, security_log, token_budget
 from app.security.prompt_fence import wrap_user_message
 from app.splitter import split_response
+from app.tools import contactos
 from app.tools.cal import _normalize_phone
 from app.tools.contactos import merge_lead_fields
 
@@ -29,10 +30,12 @@ log = structlog.get_logger(__name__)
 # Respuesta amable si un agente truena (error de OpenAI, red, modelo, etc.).
 # Evita que el bot se quede MUDO: el usuario siempre recibe algo y el error
 # real queda en los logs para diagnóstico.
-_AGENT_FALLBACK = (
-    "Disculpa, tuve un problemita técnico procesando tu mensaje. "
-    "¿Me lo puedes repetir, por favor?"
-)
+_AGENT_FALLBACK = clinic_profile.TECH_FALLBACK_TEXT
+
+# Marcador que los agentes agregan a su respuesta cuando el caso debe pasar a
+# un especialista (GATE 3). `_split` lo quita antes de enviar y `_save_memory`
+# apaga el bot para esa conversación con el mismo toggle del dashboard.
+HANDOFF_MARKER = "[[HANDOFF]]"
 
 
 class ChatState(TypedDict, total=False):
@@ -47,6 +50,7 @@ class ChatState(TypedDict, total=False):
     route: Literal["M1", "M2", "M3", "M4"]
     agent_response: str
     chunks: list[str]
+    handoff: bool           # el agente pidió pasar la conversación a un especialista
     blocked: bool           # input_guard decidió BLOCK
     suspicious: bool        # input_guard decidió SUSPICIOUS (logueado)
 
@@ -105,9 +109,7 @@ async def _resolve_media(state: ChatState) -> dict[str, Any]:
             "user_text": "",
             "user_text_raw": raw,
             "blocked": True,
-            "agent_response": (
-                "Recibí muchos mensajes tuyos hoy. Vuelve mañana o contacta a un asesor."
-            ),
+            "agent_response": clinic_profile.BUDGET_EXHAUSTED_TEXT,
         }
 
     if guard.is_block:
@@ -160,7 +162,7 @@ async def _route(state: ChatState) -> dict[str, Any]:
         code = await router.classify(state.get("user_text", ""), state.get("history"))
     except Exception as e:  # noqa: BLE001
         log.exception("router_failed", error=str(e))
-        code = "M3"  # ante la duda, catálogo (el mismo default del router)
+        code = "M3"  # ante la duda, servicios (el mismo default del router)
     return {"route": code}
 
 
@@ -216,7 +218,13 @@ async def _m4(state: ChatState) -> dict[str, Any]:
 
 
 async def _split(state: ChatState) -> dict[str, Any]:
-    chunks = split_response(state.get("agent_response") or "")
+    response = state.get("agent_response") or ""
+    # GATE 3: el agente marcó la conversación para un especialista. Quitamos el
+    # marcador para que nunca llegue al paciente.
+    handoff = HANDOFF_MARKER in response
+    if handoff:
+        response = response.replace(HANDOFF_MARKER, "")
+    chunks = split_response(response)
     # Capa 4: output guard antes de salir.
     chunks, reasons = output_guard.sanitize_chunks(chunks)
     if reasons:
@@ -227,7 +235,7 @@ async def _split(state: ChatState) -> dict[str, Any]:
             channel=state.get("channel", ""),
             reasons=",".join(reasons[:5]),
         )
-    return {"chunks": chunks}
+    return {"chunks": chunks, "agent_response": response, "handoff": handoff}
 
 
 async def _send(state: ChatState) -> dict[str, Any]:
@@ -264,12 +272,31 @@ async def _save_memory(state: ChatState) -> dict[str, Any]:
     )
     if used:
         token_budget.record(state.get("chat_id", ""), used)
+    if state.get("handoff"):
+        await _apply_handoff(state)
     return {}
+
+
+async def _apply_handoff(state: ChatState) -> None:
+    """Apaga el bot para esta conversación (mismo toggle que usa el dashboard)
+    y marca la etapa `handoff` en el CRM. Corre después de enviar el aviso."""
+    chat_id = state.get("chat_id", "")
+    channel = state.get("channel", "")
+    try:
+        await bot_settings.set_enabled(chat_id, False, channel=channel)
+    except Exception as e:  # noqa: BLE001
+        log.exception("handoff_toggle_failed", chat_id=chat_id, error=str(e))
+    try:
+        canal_visible = state.get("subchannel") or channel
+        await contactos.mark_handoff(chat_id, canal=canal_visible)
+    except Exception as e:  # noqa: BLE001
+        log.warning("handoff_mark_failed", chat_id=chat_id, error=str(e))
+    log.info("handoff_applied", chat_id=chat_id, channel=channel)
 
 
 async def _extract_lead(state: ChatState) -> dict[str, Any]:
     """Corre despues de send: extrae datos del lead y mergea en `contactos`
-    sin sobrescribir lo que el asesor haya editado a mano."""
+    sin sobrescribir lo que el personal haya editado a mano."""
     if state.get("blocked"):
         return {}
     text = state.get("user_text_raw") or ""

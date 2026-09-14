@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import re
 
+from app.clinic_profile import NAME as CLINIC_NAME
+
 # Frases sentinela: si aparecen en la respuesta del modelo, casi seguro
 # está repitiendo (o describiendo) su system prompt. Lista intencionalmente
 # corta para no tener falsos positivos.
@@ -44,7 +46,7 @@ _SCRIPT_RE = re.compile(r"<\s*/?\s*script\b", re.I)
 MAX_CHUNK_LEN = 3800
 
 NEUTRAL_REPLACEMENT = (
-    "No tengo permitido responder a eso. ¿Hay algo de propiedades en lo que "
+    f"No tengo permitido responder a eso. ¿Hay algo de {CLINIC_NAME} en lo que "
     "te pueda ayudar?"
 )
 

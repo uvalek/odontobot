@@ -33,7 +33,7 @@ for noisy in ("httpx", "httpcore", "openai._base_client"):
     logging.getLogger(noisy).setLevel(logging.WARNING)
 log = structlog.get_logger(__name__)
 
-app = FastAPI(title="Chatbot Luce Real Estate")
+app = FastAPI(title="Odontobot demo — Clínica Dental")
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -216,7 +216,7 @@ async def health() -> dict[str, str]:
 # Version "marker" hardcoded — se actualiza con cada feature releveante para
 # poder verificar que EasyPanel redeployo. Subir el numero a mano en cada
 # cambio que necesite confirmacion en produccion.
-_VERSION = "v27-burbujas-separadas-2026-06-09"
+_VERSION = "demo-dental-v1-2026-09-13"
 
 
 @app.get("/version")
@@ -280,7 +280,7 @@ async def telegram_webhook(
         except Exception as e:  # noqa: BLE001
             log.warning("telegram_file_resolve_failed", error=str(e))
 
-    # Toggle per-conversacion del dashboard: si el asesor apago el bot para
+    # Toggle per-conversacion del dashboard: si el personal apago el bot para
     # este chat, guardamos el mensaje en historial (para que aparezca en la UI)
     # pero no lo metemos al buffer ni disparamos al bot.
     if not await bot_settings.is_enabled(parsed["chat_id"]):
@@ -439,7 +439,7 @@ async def _ensure_canal(chat_id: str, canal: str, handle: str | None = None) -> 
       @ TG/IG, nombre FB). Solo se actualiza si la fila no lo tiene; el
       usuario podria haber dado luego un dato mejor (su nombre real va a `nombre`
       via el extractor M0).
-    - NO toca `nombre` (lo gestiona el extractor o el asesor manualmente).
+    - NO toca `nombre` (lo gestiona el extractor o el personal manualmente).
     """
     from app.db import supabase  # import local
     existing = await asyncio.to_thread(
@@ -486,7 +486,7 @@ async def _ensure_canal(chat_id: str, canal: str, handle: str | None = None) -> 
 
 async def _store_user_message(chat_id: str, text: str | None, media_type: str | None) -> None:
     """Guarda un mensaje entrante en historial sin disparar al bot.
-    Usado cuando el asesor apago el bot para esa conversacion."""
+    Usado cuando el bot esta apagado para esa conversacion (manual o handoff)."""
     content = text or ""
     if not content:
         if media_type == "audio":
@@ -776,6 +776,13 @@ async def webchat(
         await _ensure_canal(chat_id, "webchat")
     except Exception as e:  # noqa: BLE001
         log.warning("webchat_persist_canal_failed", error=str(e), chat_id=chat_id)
+
+    # Toggle per-conversacion (ver telegram_webhook). Tambien lo apaga el
+    # handoff automatico: el mensaje queda en historial para el especialista.
+    if not await bot_settings.is_enabled(chat_id):
+        log.info("webchat_queued_no_bot", chat_id=chat_id)
+        await _store_user_message(chat_id, text, None)
+        return {"chunks": []}
 
     log.info("webchat_in", chat_id=chat_id, text_len=len(text))
     try:

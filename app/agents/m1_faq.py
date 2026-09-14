@@ -1,4 +1,4 @@
-"""M1 — FAQ con RAG sobre Supabase.
+"""M1 — Información general de la clínica (FAQ) con RAG opcional sobre Supabase.
 
 Usa el mismo `match_documents` RPC y tabla `documents` que ya existe en
 Supabase desde el flujo n8n original.
@@ -59,7 +59,7 @@ async def respond(user_text: str, history: list[dict[str, str]]) -> str:
     context = await _retrieve(user_text)
     sys = _SYSTEM
     if context:
-        sys += f"\n\n<propertyKnowledge>\n{context}\n</propertyKnowledge>"
+        sys += f"\n\n<clinicKnowledge>\n{context}\n</clinicKnowledge>"
     msgs: list[dict[str, str]] = [{"role": "system", "content": sys}]
     msgs.extend(history[-15:])
     msgs.append({"role": "user", "content": user_text})

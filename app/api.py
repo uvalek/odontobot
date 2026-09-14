@@ -7,7 +7,7 @@ Endpoints (prefijo /api):
     GET    /conversations/{chat_id}        -> detalle (panel derecho)
     GET    /conversations/{chat_id}/messages?limit=&before_id=
     PATCH  /conversations/{chat_id}        -> bot_enabled, notas, etapa, etc.
-    POST   /conversations/{chat_id}/send   -> mensaje manual del asesor
+    POST   /conversations/{chat_id}/send   -> mensaje manual del personal de la clinica
     POST   /conversations/{chat_id}/read   -> marca como leida
     GET    /options                        -> dropdowns dinamicos del CRM
 
@@ -167,6 +167,9 @@ class ConversationPatch(BaseModel):
     bot_enabled: Optional[bool] = None
     notas_internas: Optional[str] = None
     etapa_seguimiento: Optional[str] = None
+    # DEMO dental — columnas reutilizadas (ver app/tools/contactos.py::LEAD_COLUMNS):
+    # asesor_asignado = doctor asignado, zona_interes = motivo de consulta,
+    # tipo_credito = forma de pago, presupuesto_max = edad del paciente.
     asesor_asignado: Optional[str] = None
     zona_interes: Optional[str] = None
     tipo_credito: Optional[str] = None
@@ -210,7 +213,7 @@ async def list_conversations(
         ch_internal = bs.get("channel") or co.get("canal") or "manychat"
         ch_visible = co.get("canal") or ("whatsapp" if ch_internal == "manychat" else ch_internal)
 
-        # Display name preference: nombre real (M2/asesor) > handle auto > chat_id.
+        # Display name preference: nombre real (M2/personal) > handle auto > chat_id.
         display = co.get("nombre") or co.get("handle") or sid
         item = {
             "chat_id": sid,
@@ -262,20 +265,6 @@ async def get_conversation(chat_id: str) -> dict[str, Any]:
     bs = bs_map.get(chat_id) or {}
     co = co_map.get(chat_id) or {}
 
-    propiedad = None
-    if co.get("propiedad_interesada"):
-        res = await asyncio.to_thread(
-            lambda: (
-                supabase()
-                .table("propiedades")
-                .select("id, nombre, zona, precio, recamaras, banos, metros_cuadrados, galeria")
-                .eq("id", co["propiedad_interesada"])
-                .limit(1)
-                .execute()
-            )
-        )
-        propiedad = (res.data or [None])[0]
-
     ch_internal = bs.get("channel") or co.get("canal") or "manychat"
     ch_visible = co.get("canal") or ("whatsapp" if ch_internal == "manychat" else ch_internal)
 
@@ -286,7 +275,6 @@ async def get_conversation(chat_id: str) -> dict[str, Any]:
         "bot_enabled": bs.get("bot_enabled", True),
         "last_read_at": bs.get("last_read_at"),
         "contacto": co or None,
-        "propiedad_interesada": propiedad,
         "last_message_at": (last or {}).get("created_at"),
     }
 
@@ -407,7 +395,7 @@ async def send_message(chat_id: str, body: SendMessageBody) -> dict[str, Any]:
         chat_id,
         "assistant",
         text,
-        metadata={"sender": "advisor", "advisor_name": body.advisor_name or "Asesor"},
+        metadata={"sender": "advisor", "advisor_name": body.advisor_name or "Recepción"},
     )
     return {"ok": True}
 

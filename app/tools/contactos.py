@@ -1,10 +1,18 @@
-"""Upsert de leads en la tabla `contactos` de Supabase (CRM propio).
+"""Upsert de leads (pacientes) en la tabla `contactos` de Supabase (CRM propio).
 
-Reemplaza la integración con HubSpot. La tabla tiene la columna
-`propiedad_interesada` (FK → propiedades.id), así que aceptamos:
-  - `propiedad_interesada_id`: si el agente ya tiene el ID exacto.
-  - `propiedad_interesada_nombre`: fallback, hacemos lookup en `propiedades`
-    por nombre o zona y resolvemos al ID.
+DEMO — mapeo semántico sobre columnas existentes (Opción A). Los agentes y el
+extractor hablan en términos dentales; la traducción a columnas vive SOLO en
+`LEAD_COLUMNS` y `NOTE_FIELDS`:
+
+  motivo_consulta  -> zona_interes      (categoría del motivo)
+  edad             -> presupuesto_max   (numeric)
+  forma_pago       -> tipo_credito      (contado | msi | plan_pagos)
+  fecha_cita       -> fecha_visita      (timestamptz)
+
+Los datos sin columna propia (urgencia, tipo de paciente, disponibilidad,
+tutor, cómo se enteró) se guardan en `notas_internas` como una línea que
+empieza con `[Bot]`. El bot solo reescribe esa línea mientras las notas sigan
+siendo suyas; si el personal de la clínica las edita, no las toca.
 """
 
 from __future__ import annotations
@@ -19,72 +27,83 @@ from app.db import supabase
 
 log = structlog.get_logger(__name__)
 
+# campo de dominio -> columna de `contactos`
+LEAD_COLUMNS: dict[str, str] = {
+    "nombre": "nombre",
+    "correo": "correo",
+    "telefono": "telefono",
+    "motivo_consulta": "zona_interes",
+    "edad": "presupuesto_max",
+    "forma_pago": "tipo_credito",
+    "fecha_cita": "fecha_visita",
+    "etapa_seguimiento": "etapa_seguimiento",
+}
 
-async def _resolve_propiedad_id(
-    propiedad_id: int | None,
-    propiedad_nombre: str | None,
-) -> int | None:
-    if propiedad_id:
-        try:
-            return int(propiedad_id)
-        except (TypeError, ValueError):
-            pass
-    if not propiedad_nombre:
+# campo de dominio -> etiqueta dentro de la línea [Bot] de notas_internas
+NOTE_FIELDS: dict[str, str] = {
+    "nivel_urgencia": "urgencia",
+    "tipo_paciente": "paciente",
+    "disponibilidad_preferida": "disponibilidad",
+    "tutor": "tutor",
+    "como_se_entero": "origen",
+}
+
+NOTES_COLUMN = "notas_internas"
+BOT_NOTES_PREFIX = "[Bot]"
+_NOTES_SEP = " · "
+
+
+def _empty(v: Any) -> bool:
+    return v is None or (isinstance(v, str) and not v.strip())
+
+
+def _split_fields(fields: dict[str, Any]) -> tuple[dict[str, Any], dict[str, str]]:
+    """Separa campos de dominio en (columnas, notas)."""
+    cols: dict[str, Any] = {}
+    notes: dict[str, str] = {}
+    for k, v in fields.items():
+        if _empty(v):
+            continue
+        if k in LEAD_COLUMNS:
+            cols[LEAD_COLUMNS[k]] = v
+        elif k in NOTE_FIELDS:
+            notes[NOTE_FIELDS[k]] = str(v).strip()
+    return cols, notes
+
+
+def _render_notes(notes: dict[str, str]) -> str:
+    parts = [f"{label}: {notes[label]}" for label in NOTE_FIELDS.values() if label in notes]
+    return f"{BOT_NOTES_PREFIX} " + _NOTES_SEP.join(parts)
+
+
+def _parse_bot_notes(text: str) -> dict[str, str]:
+    body = text[len(BOT_NOTES_PREFIX):].strip()
+    out: dict[str, str] = {}
+    for part in body.split(_NOTES_SEP):
+        if ":" in part:
+            k, v = part.split(":", 1)
+            if k.strip() and v.strip():
+                out[k.strip()] = v.strip()
+    return out
+
+
+def merge_notes(current: str | None, new: dict[str, str]) -> str | None:
+    """Devuelve el nuevo valor de notas_internas o None si no hay que escribir.
+
+    - Vacías: se crea la línea [Bot].
+    - Empiezan con [Bot]: se combinan (lo nuevo actualiza lo anterior).
+    - Editadas por una persona: no se tocan.
+    """
+    if not new:
         return None
-    name = propiedad_nombre.strip()
-    if not name:
+    if _empty(current):
+        return _render_notes(new)
+    assert current is not None
+    if not current.startswith(BOT_NOTES_PREFIX):
         return None
-
-    # 1) Match por nombre (substring)
-    res = await asyncio.to_thread(
-        lambda: (
-            supabase()
-            .table("propiedades")
-            .select("id")
-            .ilike("nombre", f"%{name}%")
-            .limit(1)
-            .execute()
-        )
-    )
-    rows = res.data or []
-    if rows:
-        return int(rows[0]["id"])
-
-    # 2) Fallback por zona
-    res2 = await asyncio.to_thread(
-        lambda: (
-            supabase()
-            .table("propiedades")
-            .select("id")
-            .ilike("zona", f"%{name}%")
-            .limit(1)
-            .execute()
-        )
-    )
-    rows2 = res2.data or []
-    if rows2:
-        return int(rows2[0]["id"])
-
-    log.warning("propiedad_no_resuelta", nombre=name)
-    return None
-
-
-async def _fetch_propiedad_geo(propiedad_id: int) -> tuple[str | None, str | None]:
-    """Devuelve (estado, municipio) de una propiedad. None si no existe."""
-    res = await asyncio.to_thread(
-        lambda: (
-            supabase()
-            .table("propiedades")
-            .select("estado, municipio")
-            .eq("id", propiedad_id)
-            .limit(1)
-            .execute()
-        )
-    )
-    rows = res.data or []
-    if not rows:
-        return None, None
-    return rows[0].get("estado"), rows[0].get("municipio")
+    merged = {**_parse_bot_notes(current), **new}
+    rendered = _render_notes(merged)
+    return rendered if rendered != current else None
 
 
 def _to_float(v: Any) -> float | None:
@@ -96,107 +115,94 @@ def _to_float(v: Any) -> float | None:
         return None
 
 
+async def _find_contacto(chat_id: str | None, correo: str | None) -> dict[str, Any] | None:
+    """Busca la fila del paciente: primero por chat_id (la crea el webhook),
+    luego por correo."""
+    select = f"id, handle, {NOTES_COLUMN}"
+    for col, val in (("chat_id", chat_id), ("correo", correo)):
+        if not val:
+            continue
+        res = await asyncio.to_thread(
+            lambda col=col, val=val: (
+                supabase()
+                .table("contactos")
+                .select(select)
+                .eq(col, val)
+                .limit(1)
+                .execute()
+            )
+        )
+        rows = res.data or []
+        if rows:
+            return rows[0]
+    return None
+
+
 async def upsert_contacto(
     *,
     nombre: str,
     correo: str,
     telefono: str | None = None,
-    zona_interes: str | None = None,
-    presupuesto_max: Any = None,
-    tipo_credito: str | None = None,
-    fecha_visita_iso: str | None = None,
-    propiedad_interesada_id: int | None = None,
-    propiedad_interesada_nombre: str | None = None,
-    etapa_seguimiento: str = "visita_agendada",
+    motivo_consulta: str | None = None,
+    nivel_urgencia: str | None = None,
+    tipo_paciente: str | None = None,
+    disponibilidad_preferida: str | None = None,
+    fecha_cita_iso: str | None = None,
+    etapa_seguimiento: str = "cita_agendada",
     chat_id: str | None = None,
     canal: str | None = None,
 ) -> dict[str, Any]:
-    propiedad_id = await _resolve_propiedad_id(
-        propiedad_interesada_id, propiedad_interesada_nombre
+    """Guarda al paciente al confirmar una cita (llamado desde M2)."""
+    cols, notes = _split_fields(
+        {
+            "nombre": nombre,
+            "correo": correo,
+            "telefono": telefono,
+            "motivo_consulta": motivo_consulta,
+            "fecha_cita": fecha_cita_iso,
+            "etapa_seguimiento": etapa_seguimiento,
+            "nivel_urgencia": nivel_urgencia,
+            "tipo_paciente": tipo_paciente,
+            "disponibilidad_preferida": disponibilidad_preferida,
+        }
     )
-
-    # Geo de la propiedad para copiarla al contacto: el dashboard puede
-    # filtrar leads por estado/municipio sin tener que joinear con propiedades.
-    prop_estado: str | None = None
-    prop_municipio: str | None = None
-    if propiedad_id is not None:
-        prop_estado, prop_municipio = await _fetch_propiedad_geo(propiedad_id)
-
-    payload: dict[str, Any] = {
-        "nombre": nombre,
-        "etapa_seguimiento": etapa_seguimiento,
-    }
-    if correo:
-        payload["correo"] = correo
-    if telefono:
-        payload["telefono"] = telefono
-    if zona_interes:
-        payload["zona_interes"] = zona_interes
-    pmax = _to_float(presupuesto_max)
-    if pmax is not None:
-        payload["presupuesto_max"] = pmax
-    if tipo_credito:
-        payload["tipo_credito"] = tipo_credito
-    if fecha_visita_iso:
-        # acepta string ISO; Supabase parsea timestamptz
-        payload["fecha_visita"] = fecha_visita_iso
-    if propiedad_id is not None:
-        payload["propiedad_interesada"] = propiedad_id
+    payload: dict[str, Any] = dict(cols)
     if chat_id:
         payload["chat_id"] = chat_id
     if canal:
         payload["canal"] = canal
 
     # En WhatsApp el telefono es el mejor identificador legible para el dashboard.
-    # Si tenemos telefono, lo proponemos como handle; mas abajo solo lo escribimos
-    # cuando el handle existente este vacio (no pisamos lo que ya este puesto).
     handle_candidate = telefono if (canal == "whatsapp" and telefono) else None
 
-    # Upsert manual por correo (no hay unique constraint)
-    if correo:
-        existing = await asyncio.to_thread(
+    existing = await _find_contacto(chat_id, correo)
+    if existing:
+        cid = existing["id"]
+        if handle_candidate and not (existing.get("handle") or "").strip():
+            payload["handle"] = handle_candidate
+        new_notes = merge_notes(existing.get(NOTES_COLUMN), notes)
+        if new_notes is not None:
+            payload[NOTES_COLUMN] = new_notes
+        res = await asyncio.to_thread(
             lambda: (
                 supabase()
                 .table("contactos")
-                .select("id, handle, estado, municipio")
-                .eq("correo", correo)
-                .limit(1)
+                .update(payload)
+                .eq("id", cid)
                 .execute()
             )
         )
-        rows = existing.data or []
-        if rows:
-            cid = rows[0]["id"]
-            if handle_candidate and not (rows[0].get("handle") or "").strip():
-                payload["handle"] = handle_candidate
-            # Estado/municipio: solo escribimos si la fila no los tiene,
-            # para no pisar lo que el asesor haya editado a mano.
-            if prop_estado and not (rows[0].get("estado") or "").strip():
-                payload["estado"] = prop_estado
-            if prop_municipio and not (rows[0].get("municipio") or "").strip():
-                payload["municipio"] = prop_municipio
-            res = await asyncio.to_thread(
-                lambda: (
-                    supabase()
-                    .table("contactos")
-                    .update(payload)
-                    .eq("id", cid)
-                    .execute()
-                )
-            )
-            log.info("contacto_actualizado", id=cid, correo=correo, propiedad=propiedad_id)
-            return (res.data or [{"id": cid}])[0]
+        log.info("contacto_actualizado", id=cid, correo=correo)
+        return (res.data or [{"id": cid}])[0]
 
     if handle_candidate:
         payload.setdefault("handle", handle_candidate)
-    if prop_estado:
-        payload.setdefault("estado", prop_estado)
-    if prop_municipio:
-        payload.setdefault("municipio", prop_municipio)
+    if notes:
+        payload[NOTES_COLUMN] = _render_notes(notes)
     res = await asyncio.to_thread(
         lambda: supabase().table("contactos").insert(payload).execute()
     )
-    log.info("contacto_creado", correo=correo, propiedad=propiedad_id)
+    log.info("contacto_creado", correo=correo)
     return (res.data or [{}])[0]
 
 
@@ -208,19 +214,29 @@ async def merge_lead_fields(
 ) -> dict[str, Any] | None:
     """Inserta o actualiza `contactos` por chat_id sin sobrescribir.
 
-    Reglas:
+    `fields` llega con nombres de dominio (ver extractor). Reglas:
     - Si la fila no existe, la crea con todos los campos provistos.
-    - Si existe, solo escribe los campos cuyo valor actual es NULL/vacio.
-      Asi el asesor puede editar manualmente y el bot no le pisa los datos.
+    - Si existe, solo escribe las columnas cuyo valor actual es NULL/vacio.
+      Asi el personal de la clinica puede editar a mano y el bot no le pisa
+      los datos. Excepcion: la linea [Bot] de notas_internas (ver merge_notes).
     """
     if not chat_id or not fields:
         return None
 
+    cols, notes = _split_fields(fields)
+    if "presupuesto_max" in cols:  # edad
+        cols["presupuesto_max"] = _to_float(cols["presupuesto_max"])
+        if cols["presupuesto_max"] is None:
+            cols.pop("presupuesto_max")
+    if not cols and not notes:
+        return None
+
+    select_cols = ", ".join(["id", *sorted(set(LEAD_COLUMNS.values())), NOTES_COLUMN])
     existing = await asyncio.to_thread(
         lambda: (
             supabase()
             .table("contactos")
-            .select("id, nombre, telefono, correo, zona_interes, presupuesto_max, tipo_credito, etapa_seguimiento")
+            .select(select_cols)
             .eq("chat_id", chat_id)
             .limit(1)
             .execute()
@@ -229,14 +245,11 @@ async def merge_lead_fields(
     rows = existing.data or []
 
     if not rows:
-        # Crear nuevo
-        payload: dict[str, Any] = {"chat_id": chat_id, "canal": canal}
-        for k, v in fields.items():
-            if v not in (None, ""):
-                payload[k] = v
+        payload: dict[str, Any] = {"chat_id": chat_id, "canal": canal, **cols}
+        if notes:
+            payload[NOTES_COLUMN] = _render_notes(notes)
         # nombre ya es nullable; el dashboard cae en handle/chat_id como fallback.
-        # No metemos chat_id como nombre porque no es un nombre real.
-        payload.setdefault("etapa_seguimiento", fields.get("etapa_seguimiento") or "nuevo")
+        payload.setdefault("etapa_seguimiento", "nuevo")
         res = await asyncio.to_thread(
             lambda: supabase().table("contactos").insert(payload).execute()
         )
@@ -246,12 +259,12 @@ async def merge_lead_fields(
     row = rows[0]
     cid = row["id"]
     update: dict[str, Any] = {}
-    for k, v in fields.items():
-        if v in (None, ""):
-            continue
-        cur = row.get(k)
-        if cur in (None, ""):
+    for k, v in cols.items():
+        if _empty(row.get(k)):
             update[k] = v
+    new_notes = merge_notes(row.get(NOTES_COLUMN), notes)
+    if new_notes is not None:
+        update[NOTES_COLUMN] = new_notes
 
     if not update:
         return row
@@ -269,7 +282,31 @@ async def merge_lead_fields(
     return (res.data or [{"id": cid}])[0]
 
 
-def fecha_visita_from_iso_utc(iso_utc: str) -> str | None:
+async def mark_handoff(chat_id: str, canal: str | None = None) -> None:
+    """Marca la conversación como pasada a un especialista (etapa `handoff`)."""
+    if not chat_id:
+        return
+    etapa = {LEAD_COLUMNS["etapa_seguimiento"]: "handoff"}
+    res = await asyncio.to_thread(
+        lambda: (
+            supabase()
+            .table("contactos")
+            .update(etapa)
+            .eq("chat_id", chat_id)
+            .execute()
+        )
+    )
+    if not res.data:
+        payload = {"chat_id": chat_id, **etapa}
+        if canal:
+            payload["canal"] = canal
+        await asyncio.to_thread(
+            lambda: supabase().table("contactos").insert(payload).execute()
+        )
+    log.info("contacto_handoff", chat_id=chat_id)
+
+
+def fecha_cita_from_iso_utc(iso_utc: str) -> str | None:
     """Devuelve un ISO timestamptz que Supabase puede insertar tal cual."""
     if not iso_utc:
         return None

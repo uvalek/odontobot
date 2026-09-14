@@ -23,12 +23,9 @@ class Settings(BaseSettings):
     supabase_anon_key: str = ""
     supabase_rag_table: str = "documents"
     supabase_rag_query: str = "match_documents"
-    supabase_properties_rpc: str = "buscar_propiedades"
 
     cal_api_key: str = ""
     cal_event_type_id: int = 0
-
-    hubspot_token: str = ""
 
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
@@ -53,9 +50,7 @@ class Settings(BaseSettings):
     # API key compartido (header X-API-Key) y origenes permitidos para CORS.
     # Acepta lista separada por comas: "https://a.com,https://b.vercel.app"
     dashboard_api_key: str = ""
-    dashboard_cors_origins: str = (
-        "https://luce-real-estate-landing.vercel.app,http://localhost:5173,http://localhost:3000"
-    )
+    dashboard_cors_origins: str = "http://localhost:5173,http://localhost:3000"
     # Por defecto sin regex (estaba aceptando *.vercel.app y eso permitia
     # a cualquiera deployar a Vercel y consumir el endpoint). Si se
     # necesita matchear varios subdominios, definir explicitamente con

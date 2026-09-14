@@ -1,4 +1,4 @@
-"""M3 — Catálogo de propiedades. Llama tool `buscar_propiedades` (Supabase RPC)."""
+"""M3 — Catálogo de servicios y precios. Llama tool `buscar_servicios` (perfil de la clínica)."""
 
 from __future__ import annotations
 
@@ -7,10 +7,11 @@ import json
 
 from openai import OpenAI
 
+from app.clinic_profile import NAME as CLINIC_NAME
 from app.config import get_settings
 from app.llm import completion_params
 from app.security.system_prompt import secure_system_prompt
-from app.tools.properties import buscar_propiedades
+from app.tools.servicios import buscar_servicios
 
 _SYSTEM = secure_system_prompt("m3_catalogo")
 
@@ -18,9 +19,9 @@ _TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "buscar_propiedades",
+            "name": "buscar_servicios",
             "description": (
-                "Busca propiedades en el catálogo Luce Real Estate. "
+                f"Busca servicios y precios de referencia de {CLINIC_NAME}. "
                 "Acepta un único parámetro 'busqueda' con palabras clave."
             ),
             "parameters": {
@@ -28,7 +29,7 @@ _TOOLS = [
                 "properties": {
                     "busqueda": {
                         "type": "string",
-                        "description": "Palabras clave del usuario (zona, tipo, nombre).",
+                        "description": "Palabras clave del paciente (tratamiento, sinónimo, categoría).",
                     }
                 },
                 "required": ["busqueda"],
@@ -68,7 +69,7 @@ async def respond(user_text: str, history: list[dict[str, str]]) -> str:
 
         for tc in tool_calls:
             args = json.loads(tc["function"]["arguments"] or "{}")
-            results = await buscar_propiedades(args.get("busqueda", ""))
+            results = await buscar_servicios(args.get("busqueda", ""))
             msgs.append(
                 {
                     "role": "tool",

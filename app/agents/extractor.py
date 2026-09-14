@@ -1,15 +1,18 @@
-"""Extractor de datos del lead.
+"""Extractor de datos del paciente.
 
 Despues de cada turno corre un mini-LLM con structured output sobre los
-ultimos N mensajes para extraer:
+ultimos N mensajes para extraer (nombres de dominio; la traduccion a columnas
+de `contactos` vive en `app/tools/contactos.py::LEAD_COLUMNS`):
 
-  - nombre
-  - zona_interes (texto, ej. "Apizaco", "Tlaxcala centro")
-  - presupuesto_max (numero MXN)
-  - tipo_credito ("infonavit" | "fovissste" | "bancario" | "contado" | "otro")
-  - etapa_sugerida ("nuevo" | "calificado" | "visita_agendada" | "visito" | "cerrado")
-  - correo
-  - telefono
+  - nombre, correo, telefono
+  - motivo_consulta ("dolor_urgencia" | "limpieza_revision" | "estetica_blanqueamiento"
+                     | "ortodoncia" | "implantes_protesis" | "odontopediatria")
+  - edad (entero)
+  - forma_pago ("contado" | "msi" | "plan_pagos")
+  - nivel_urgencia ("alta" | "media" | "baja")
+  - tipo_paciente ("nuevo" | "seguimiento")
+  - disponibilidad_preferida, tutor, como_se_entero (texto corto)
+  - etapa_sugerida ("nuevo" | "calificado" | "cita_agendada" | "atendido")
 
 Devuelve solo los campos que pudo inferir con alta confianza. Los None se
 ignoran y NO sobrescriben datos previos en `contactos`.
@@ -24,44 +27,68 @@ from typing import Any
 import structlog
 from openai import OpenAI
 
+from app.clinic_profile import MOTIVOS
 from app.config import get_settings
 from app.llm import completion_params
 
 log = structlog.get_logger(__name__)
 
 
-_SYSTEM = """Eres un extractor de datos para un CRM inmobiliario en Mexico.
-Lees el ultimo mensaje del usuario y, opcionalmente, el historial reciente,
-y devuelves un JSON con los datos del prospecto que puedas inferir con alta
-confianza.
+_SYSTEM = """Eres un extractor de datos para el CRM de una clinica dental en Mexico.
+Lees el ultimo mensaje del paciente y, opcionalmente, el historial reciente,
+y devuelves un JSON con los datos que puedas inferir con alta confianza.
 
 REGLAS:
 - Si un campo NO esta claro, devuelvelo como null. Mejor null que adivinar.
-- presupuesto_max: numero entero en pesos mexicanos (ej. "4 millones" -> 4000000,
-  "1.5M" -> 1500000, "500 mil" -> 500000). Si solo dice "barato" o "no se", null.
-- tipo_credito: uno de ["infonavit","fovissste","bancario","contado","otro"]
-  (minusculas). "credito de mi trabajo" en Mexico suele ser infonavit. null si dudas.
-- zona_interes: nombre corto de la ciudad/colonia/zona (ej. "Apizaco", "Tlaxcala centro").
-  Si solo dice "centro" sin ciudad, null.
-- etapa_sugerida: usa heuristica conservadora.
+- NUNCA extraigas sintomas detallados, diagnosticos, medicamentos ni historial clinico.
+- motivo_consulta: una de ["dolor_urgencia","limpieza_revision","estetica_blanqueamiento",
+  "ortodoncia","implantes_protesis","odontopediatria"]. Dolor, golpe, inflamacion o diente
+  roto -> "dolor_urgencia". Brackets o alineadores -> "ortodoncia". Coronas, implantes,
+  protesis -> "implantes_protesis". Revision de un nino -> "odontopediatria". null si dudas.
+- edad: entero con la edad del paciente (no del tutor). null si no la dijo.
+- forma_pago: una de ["contado","msi","plan_pagos"]. Efectivo, tarjeta de un solo pago o
+  transferencia -> "contado". Meses sin intereses -> "msi". Enganche y mensualidades ->
+  "plan_pagos". null si dudas.
+- nivel_urgencia: "alta" si hay dolor fuerte, golpe, inflamacion o sangrado; "media" si hay
+  molestia leve; "baja" si dijo que no tiene dolor. null si no se hablo de eso.
+- tipo_paciente: "nuevo" si es su primera vez en la clinica; "seguimiento" si ya se atendio
+  antes. null si dudas.
+- disponibilidad_preferida: texto corto con dia y horario preferido (ej. "martes por la tarde").
+- tutor: nombre de la madre, padre o tutor, solo si el paciente es menor y lo dijo.
+- como_se_entero: texto corto (ej. "Instagram", "recomendacion", "Google").
+- etapa_sugerida: heuristica conservadora.
     * "nuevo": acaba de llegar, solo saludo
-    * "calificado": dio presupuesto + tipo_credito + zona
-    * "visita_agendada": confirmo fecha y hora de visita
-    * "visito": dijo que ya visito la propiedad
-    * "cerrado": ya compro / desistio
+    * "calificado": ya dio motivo_consulta + nivel_urgencia + tipo_paciente
+    * "cita_agendada": confirmo fecha y hora de su cita
+    * "atendido": dijo que ya fue a su cita
   Si no estas seguro, null (no degrades).
-- nombre: solo si el usuario lo dijo explicitamente ("me llamo Juan", "soy Maria").
-- correo, telefono: solo si el usuario los escribio en el mensaje.
+- nombre: solo si el paciente lo dijo explicitamente ("me llamo Juan", "soy Maria").
+- correo, telefono: solo si el paciente los escribio en el mensaje.
 
 Responde SIEMPRE con un JSON valido con exactamente estas llaves:
-{"nombre": str|null, "zona_interes": str|null, "presupuesto_max": int|null,
- "tipo_credito": str|null, "etapa_sugerida": str|null, "correo": str|null,
- "telefono": str|null}
+{"nombre": str|null, "correo": str|null, "telefono": str|null,
+ "motivo_consulta": str|null, "edad": int|null, "forma_pago": str|null,
+ "nivel_urgencia": str|null, "tipo_paciente": str|null,
+ "disponibilidad_preferida": str|null, "tutor": str|null,
+ "como_se_entero": str|null, "etapa_sugerida": str|null}
 """
 
 
-_VALID_CREDITO = {"infonavit", "fovissste", "bancario", "contado", "otro"}
-_VALID_ETAPA = {"nuevo", "calificado", "visita_agendada", "visito", "cerrado"}
+_VALID_ENUMS: dict[str, set[str]] = {
+    "motivo_consulta": set(MOTIVOS),
+    "forma_pago": {"contado", "msi", "plan_pagos"},
+    "nivel_urgencia": {"alta", "media", "baja"},
+    "tipo_paciente": {"nuevo", "seguimiento"},
+}
+_VALID_ETAPA = {"nuevo", "calificado", "cita_agendada", "atendido"}
+_TEXT_FIELDS = (
+    "nombre",
+    "correo",
+    "telefono",
+    "disponibilidad_preferida",
+    "tutor",
+    "como_se_entero",
+)
 
 
 def _client() -> OpenAI:
@@ -71,16 +98,17 @@ def _client() -> OpenAI:
 def _coerce(raw: dict[str, Any]) -> dict[str, Any]:
     """Normaliza y descarta valores invalidos o vacios."""
     out: dict[str, Any] = {}
-    for k in ("nombre", "zona_interes", "correo", "telefono"):
+    for k in _TEXT_FIELDS:
         v = raw.get(k)
         if isinstance(v, str) and v.strip():
             out[k] = v.strip()
-    pmax = raw.get("presupuesto_max")
-    if isinstance(pmax, (int, float)) and pmax > 0:
-        out["presupuesto_max"] = int(pmax)
-    tc = raw.get("tipo_credito")
-    if isinstance(tc, str) and tc.lower().strip() in _VALID_CREDITO:
-        out["tipo_credito"] = tc.lower().strip()
+    edad = raw.get("edad")
+    if isinstance(edad, (int, float)) and 0 < edad < 120:
+        out["edad"] = int(edad)
+    for k, valid in _VALID_ENUMS.items():
+        v = raw.get(k)
+        if isinstance(v, str) and v.lower().strip() in valid:
+            out[k] = v.lower().strip()
     et = raw.get("etapa_sugerida")
     if isinstance(et, str) and et.lower().strip() in _VALID_ETAPA:
         out["etapa_seguimiento"] = et.lower().strip()
@@ -104,7 +132,7 @@ async def extract(user_text: str, history: list[dict[str, str]] | None = None) -
             messages=msgs,  # type: ignore[arg-type]
             response_format={"type": "json_object"},
             **completion_params(
-                settings.openai_model_brain, temperature=0, max_tokens=200
+                settings.openai_model_brain, temperature=0, max_tokens=300
             ),
         )
         return resp.choices[0].message.content or "{}"

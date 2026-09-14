@@ -1,8 +1,8 @@
-"""Helpers para renderizar fotos/enlaces de propiedades según el canal.
+"""Helpers para renderizar imágenes/enlaces Markdown según el canal.
 
-El agente M3 emite las fotos en formato Markdown:
-  - Foto principal:  ![Foto principal](https://...)
-  - Fotos extra:     [Recámara](https://...)  [Cocina](https://...)
+Si un agente emite imágenes o enlaces en formato Markdown:
+  - Imagen:  ![Imagen](https://...)
+  - Enlaces: [Ubicación](https://...)  [Aviso de privacidad](https://...)
 
 Cada canal lo renderiza distinto:
   - Web: el widget interpreta el Markdown (img + <a> azul).
