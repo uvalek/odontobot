@@ -119,7 +119,7 @@ def install_fakes(world: FakeWorld) -> None:
         )
         return {"id": 1}
 
-    async def mark_handoff(chat_id, canal=None):
+    async def mark_handoff(chat_id, canal=None, nota=None):
         world.handoffs.add(chat_id)
 
     async def get_slots(start_time, end_time):
@@ -223,6 +223,8 @@ async def main() -> int:
         # Valores dummy para que Settings cargue sin Supabase real.
         os.environ.setdefault("SUPABASE_URL", "http://localhost:54321")
         os.environ.setdefault("SUPABASE_SERVICE_KEY", "offline")
+        # Offline no toca GoHighLevel aunque .env tenga el token.
+        os.environ["GHL_PRIVATE_TOKEN"] = ""
 
     from app.config import get_settings
 

@@ -24,6 +24,13 @@ class Settings(BaseSettings):
     supabase_rag_table: str = "documents"
     supabase_rag_query: str = "match_documents"
 
+    # GoHighLevel (Private Integration). Si hay token + location, los pacientes
+    # se sincronizan al CRM de GHL; si además hay calendario, las citas se
+    # agendan en GHL en lugar de Cal.com.
+    ghl_private_token: str = ""
+    ghl_location_id: str = ""
+    ghl_calendar_id: str = ""
+
     cal_api_key: str = ""
     cal_event_type_id: int = 0
 

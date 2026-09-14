@@ -288,7 +288,9 @@ async def _apply_handoff(state: ChatState) -> None:
         log.exception("handoff_toggle_failed", chat_id=chat_id, error=str(e))
     try:
         canal_visible = state.get("subchannel") or channel
-        await contactos.mark_handoff(chat_id, canal=canal_visible)
+        await contactos.mark_handoff(
+            chat_id, canal=canal_visible, nota=state.get("user_text_raw") or None
+        )
     except Exception as e:  # noqa: BLE001
         log.warning("handoff_mark_failed", chat_id=chat_id, error=str(e))
     log.info("handoff_applied", chat_id=chat_id, channel=channel)

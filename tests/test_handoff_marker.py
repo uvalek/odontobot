@@ -35,7 +35,7 @@ async def test_save_memory_con_handoff_apaga_el_bot(monkeypatch):
     async def fake_set_enabled(chat_id, enabled, channel=None):
         calls["toggle"] = (chat_id, enabled, channel)
 
-    async def fake_mark_handoff(chat_id, canal=None):
+    async def fake_mark_handoff(chat_id, canal=None, nota=None):
         calls["etapa"] = chat_id
 
     monkeypatch.setattr(graph.memory, "append", fake_append)

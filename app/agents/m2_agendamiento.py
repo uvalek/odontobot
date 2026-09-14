@@ -1,4 +1,4 @@
-"""M2 — Calificación y agendamiento de citas. Tool calling con Cal.com + CRM `contactos`."""
+"""M2 — Calificación y agendamiento de citas. Tool calling con la agenda (GoHighLevel o Cal.com) + CRM `contactos`."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from openai import OpenAI
 from app.config import get_settings
 from app.llm import completion_params
 from app.security.system_prompt import secure_system_prompt
-from app.tools import cal, contactos
+from app.tools import agenda, cal, contactos
 
 _SYSTEM = secure_system_prompt("m2_agendamiento")
 
@@ -21,7 +21,7 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "consultar_disponibilidad",
-            "description": "Consulta huecos disponibles en Cal.com entre dos fechas ISO UTC.",
+            "description": "Consulta horarios disponibles en la agenda de la clínica entre dos fechas ISO UTC.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -36,7 +36,7 @@ _TOOLS = [
         "type": "function",
         "function": {
             "name": "book_appointment",
-            "description": "Reserva una cita en Cal.com y guarda al paciente en la tabla `contactos` de Supabase.",
+            "description": "Reserva la cita en la agenda de la clínica y guarda al paciente en el CRM.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -117,7 +117,7 @@ def _now_cdmx() -> str:
 
 
 async def _cambio_cita(args: dict, user_phone: str) -> dict:
-    bookings = await cal.list_bookings(args["email"])
+    bookings = await agenda.list_bookings(args["email"])
     if not bookings:
         return {"status": "not_found", "message": "No se encontró ninguna cita."}
 
@@ -130,9 +130,9 @@ async def _cambio_cita(args: dict, user_phone: str) -> dict:
     uid = target.get("uid")
 
     if args["objetivo"] == "reagendar":
-        result = await cal.reschedule(uid, args["rescheduleDate"])
+        result = await agenda.reschedule(uid, args["rescheduleDate"])
         return {"status": "rescheduled", "raw": result}
-    result = await cal.cancel(uid, args.get("reason", ""))
+    result = await agenda.cancel(uid, args.get("reason", ""))
     return {"status": "cancelled", "raw": result}
 
 
@@ -207,17 +207,28 @@ async def respond(
             args = json.loads(tc["function"]["arguments"] or "{}")
             try:
                 if name == "consultar_disponibilidad":
-                    result = await cal.get_slots(args["startTime"], args["endTime"])
+                    result = await agenda.get_slots(args["startTime"], args["endTime"])
                 elif name == "book_appointment":
                     # Telefono efectivo: el del canal (WA) > el que pidio el LLM (TG/IG/MSG).
                     effective_phone = user_phone or (
                         cal._normalize_phone(args.get("userPhone")) or ""
                     )
-                    booking = await cal.book(
+                    booking = await agenda.book(
                         start_time=args["startTime"],
                         user_name=args["userName"],
                         user_email=args["userEmail"],
                         user_phone=effective_phone,
+                        chat_id=chat_id,
+                        canal=canal,
+                        extra={
+                            k: args.get(k)
+                            for k in (
+                                "motivo_consulta",
+                                "nivel_urgencia",
+                                "tipo_paciente",
+                                "disponibilidad_preferida",
+                            )
+                        },
                     )
                     try:
                         await contactos.upsert_contacto(

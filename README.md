@@ -25,6 +25,18 @@ Todos los datos del negocio viven en **`app/clinic_profile.py`**: nombre, direcc
 
 Ante preguntas de diagnóstico, medicamentos o dosis, precio cerrado de un caso, quejas o seguimiento de un tratamiento en curso, el agente avisa que un especialista lo atiende y agrega el marcador interno `[[HANDOFF]]`. El grafo (`app/graph.py`) quita el marcador, apaga el bot para esa conversación (`bot_settings.bot_enabled = false`, el mismo toggle del dashboard) y marca la etapa `handoff`. Para reactivar el bot: dashboard (`PATCH /api/conversations/{chat_id}` con `bot_enabled: true`).
 
+### GoHighLevel (CRM y calendario)
+
+Si `GHL_PRIVATE_TOKEN` y `GHL_LOCATION_ID` están definidos, cada paciente se refleja como contacto en GHL (`app/tools/ghl_sync.py`): nombre, correo, teléfono, campos personalizados y etiquetas (`chatbot`, canal, `cita-agendada`, `handoff-doctor`). El contacto se crea cuando el paciente da nombre, correo o teléfono, o cuando hay handoff; su id queda en `contactos.ghl_contact_id`.
+
+Con `GHL_CALENDAR_ID`, M2 consulta horarios y agenda, reagenda o cancela en ese calendario (`app/tools/agenda.py` elige GHL o Cal.com).
+
+Permisos de la Private Integration: Contacts (View/Edit), Custom Fields (View/Edit), Calendars (View/Edit), Calendar Events (View/Edit). Crear los campos personalizados:
+
+```bash
+python scripts/ghl_setup.py
+```
+
 ### Campos del paciente (demo: columnas reutilizadas)
 
 La traducción vive en `app/tools/contactos.py::LEAD_COLUMNS`:

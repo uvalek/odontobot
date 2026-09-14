@@ -24,6 +24,7 @@ from typing import Any
 import structlog
 
 from app.db import supabase
+from app.tools import ghl_sync
 
 log = structlog.get_logger(__name__)
 
@@ -193,6 +194,7 @@ async def upsert_contacto(
             )
         )
         log.info("contacto_actualizado", id=cid, correo=correo)
+        await ghl_sync.sync_contact(chat_id=chat_id or "", canal=canal, tags=["cita-agendada"])
         return (res.data or [{"id": cid}])[0]
 
     if handle_candidate:
@@ -203,6 +205,7 @@ async def upsert_contacto(
         lambda: supabase().table("contactos").insert(payload).execute()
     )
     log.info("contacto_creado", correo=correo)
+    await ghl_sync.sync_contact(chat_id=chat_id or "", canal=canal, tags=["cita-agendada"])
     return (res.data or [{}])[0]
 
 
@@ -254,6 +257,7 @@ async def merge_lead_fields(
             lambda: supabase().table("contactos").insert(payload).execute()
         )
         log.info("contacto_lead_creado", chat_id=chat_id, fields=list(payload.keys()))
+        await ghl_sync.sync_contact(chat_id=chat_id, canal=canal)
         return (res.data or [{}])[0]
 
     row = rows[0]
@@ -279,11 +283,13 @@ async def merge_lead_fields(
         )
     )
     log.info("contacto_lead_actualizado", chat_id=chat_id, fields=list(update.keys()))
+    await ghl_sync.sync_contact(chat_id=chat_id, canal=canal)
     return (res.data or [{"id": cid}])[0]
 
 
-async def mark_handoff(chat_id: str, canal: str | None = None) -> None:
-    """Marca la conversación como pasada a un especialista (etapa `handoff`)."""
+async def mark_handoff(chat_id: str, canal: str | None = None, nota: str | None = None) -> None:
+    """Marca la conversación como pasada al doctor (etapa `handoff`) y lo
+    refleja en GoHighLevel con la etiqueta `handoff-doctor` y una nota."""
     if not chat_id:
         return
     etapa = {LEAD_COLUMNS["etapa_seguimiento"]: "handoff"}
@@ -304,6 +310,13 @@ async def mark_handoff(chat_id: str, canal: str | None = None) -> None:
             lambda: supabase().table("contactos").insert(payload).execute()
         )
     log.info("contacto_handoff", chat_id=chat_id)
+    await ghl_sync.sync_contact(
+        chat_id=chat_id,
+        canal=canal,
+        tags=["handoff-doctor"],
+        force=True,
+        note=f"El chatbot pasó la conversación al doctor. Último mensaje del paciente:\n{nota}" if nota else None,
+    )
 
 
 def fecha_cita_from_iso_utc(iso_utc: str) -> str | None:
